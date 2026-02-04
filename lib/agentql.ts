@@ -199,42 +199,53 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
     return restaurants;
 }
 
-// ===== YELP SCRAPER =====
-export async function scrapeYelp(zipCode: string): Promise<ScrapedRestaurant[]> {
+// ===== GOOGLE SCRAPER =====
+// Using Google Search instead of Yelp because Yelp blocks scrapers
+export async function scrapeGoogle(zipCode: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Removed delay to speed up scraping
-
-        const searchUrl = `https://www.yelp.com/search?find_desc=chicken+wings&find_loc=${zipCode}`;
-        const goal = `Search for chicken wings restaurants in zip code ${zipCode} and extract a JSON array of businesses with these fields for each: name, address, phone, rating (number), image (image URL), hours (business hours as string). Return as JSON array called "businesses".`;
+        const searchUrl = `https://www.google.com/search?q=chicken+wings+shops+in+usa+${zipCode}`;
+        const goal = `Extract chicken wings restaurants from Google search results. Return a JSON array called "businesses" with these fields for each restaurant listing: name, address, rating (number like 4.2), phone, hours (like "Closed · Opens 11 am"), image (image URL if visible). Extract all visible restaurant listings from the search results.`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
-            console.log('Yelp: No results from Mino');
+            console.log('Google: No results from Mino');
             return restaurants;
         }
 
         const data = result.data as { businesses?: Array<Record<string, unknown>> };
         for (const b of data.businesses || []) {
+            // Parse hours to determine if open
+            const hoursStr = String(b.hours || '');
+            const isOpen = !hoursStr.toLowerCase().includes('closed');
+
             restaurants.push({
                 name: String(b.name || 'Unknown'),
                 address: String(b.address || ''),
                 phone: String(b.phone || ''),
-                hours: String(b.hours || ''),
+                hours: hoursStr,
                 rating: Number(b.rating) || undefined,
                 image_url: String(b.image || ''),
-                is_open: true,
-                source: 'yelp',
+                is_open: isOpen,
+                source: 'google',
                 menu_items: [],
             });
         }
-        console.log(`Yelp: Found ${restaurants.length} restaurants`);
+        console.log(`Google: Found ${restaurants.length} restaurants`);
     } catch (error) {
-        console.error('Yelp scrape error:', error);
+        console.error('Google scrape error:', error);
     }
 
     return restaurants;
+}
+
+// ===== YELP SCRAPER (DEPRECATED - blocks scrapers) =====
+export async function scrapeYelp(zipCode: string): Promise<ScrapedRestaurant[]> {
+    // Yelp blocks scrapers with "You have been blocked" page
+    // Keeping this function for backwards compatibility but it won't be used
+    console.log('Yelp: Skipping - known to block scrapers');
+    return [];
 }
 
 // Helper function to process restaurants into WingSpots
@@ -294,12 +305,12 @@ export async function scrapeAllSources(zipCode: string, lat: number, lng: number
 
     console.log(`Starting scrape for zip: ${zipCode}`);
 
-    // Try Yelp first (most reliable for local search)
+    // Try Google first (most reliable, doesn't block scrapers)
     try {
-        console.log('Trying Yelp...');
-        const yelpResults = await scrapeYelp(zipCode);
-        allRestaurants.push(...yelpResults);
-        console.log(`Yelp returned ${yelpResults.length} results`);
+        console.log('Trying Google...');
+        const googleResults = await scrapeGoogle(zipCode);
+        allRestaurants.push(...googleResults);
+        console.log(`Google returned ${googleResults.length} results`);
 
         // Early exit if we have enough results
         if (allRestaurants.length >= MIN_RESULTS) {
@@ -308,7 +319,7 @@ export async function scrapeAllSources(zipCode: string, lat: number, lng: number
             return deduplicateWingSpots(wingSpots);
         }
     } catch (error) {
-        console.error('Yelp scrape failed:', error);
+        console.error('Google scrape failed:', error);
     }
 
     // Try DoorDash

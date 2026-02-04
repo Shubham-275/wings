@@ -5,7 +5,7 @@
 /**
  * Source platform for wing data
  */
-export type WingSource = 'doordash' | 'ubereats' | 'grubhub' | 'yelp';
+export type WingSource = 'doordash' | 'ubereats' | 'grubhub' | 'yelp' | 'google';
 
 /**
  * Pin status color
