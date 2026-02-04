@@ -1,0 +1,41 @@
+{
+  "name": "wing-scout",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hyper-local chicken wing availability tracker for Super Bowl LX",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@supabase/supabase-js": "^2.45.0",
+    "mapbox-gl": "^3.5.1",
+    "@upstash/redis": "^1.34.0",
+    "date-fns": "^3.6.0",
+    "@tanstack/react-query": "^5.51.1",
+    "@tanstack/react-query-persist-client": "^5.51.1",
+    "@tanstack/query-sync-storage-persister": "^5.51.1",
+    "axios": "^1.7.2",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.3",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "tailwindcss": "^3.4.4",
+    "postcss": "^8.4.39",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
