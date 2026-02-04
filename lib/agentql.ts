@@ -4,8 +4,9 @@
 
 import axios from 'axios';
 import { ScrapedRestaurant, WingSpot, AgentQLResponse } from './types';
-import { calculateStatus, randomDelay, deduplicateWingSpots } from './utils';
-import { extractWingMenuFromImage, findBestWingDeal } from './ocr';
+import { calculateStatus, deduplicateWingSpots } from './utils';
+// OCR imports removed for speed - can add back later if needed
+// import { extractWingMenuFromImage, findBestWingDeal } from './ocr';
 
 // Mino API Configuration
 const MINO_API_URL = process.env.AGENTQL_API_URL || 'https://mino.ai/v1/automation/run-sse';
@@ -48,7 +49,7 @@ async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResp
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream',
                 },
-                timeout: 90000, // 90 second timeout for SSE
+                timeout: 25000, // 25 second timeout to fit within Vercel's limits
                 responseType: 'text', // SSE returns text stream
             }
         );
@@ -92,7 +93,7 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        await randomDelay(1000, 2000);
+        // Removed delay to speed up scraping
 
         const searchUrl = `https://www.doordash.com/search/store/chicken%20wings/?pickup=false`;
         const goal = `Search for chicken wings restaurants and extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean). Return as JSON array called "restaurants".`;
@@ -129,7 +130,7 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        await randomDelay(1000, 2000);
+        // Removed delay to speed up scraping
 
         const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings`;
         const goal = `Search for chicken wings restaurants and extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean). Return as JSON array called "stores".`;
@@ -166,7 +167,7 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        await randomDelay(1000, 2000);
+        // Removed delay to speed up scraping
 
         const searchUrl = `https://www.grubhub.com/search?query=chicken+wings&locationMode=DELIVERY`;
         const goal = `Search for chicken wings restaurants and extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean). Return as JSON array called "restaurants".`;
@@ -203,7 +204,7 @@ export async function scrapeYelp(zipCode: string): Promise<ScrapedRestaurant[]> 
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        await randomDelay(1000, 2000);
+        // Removed delay to speed up scraping
 
         const searchUrl = `https://www.yelp.com/search?find_desc=chicken+wings&find_loc=${zipCode}`;
         const goal = `Search for chicken wings restaurants in zip code ${zipCode} and extract a JSON array of businesses with these fields for each: name, address, phone, rating (number), image (image URL), hours (business hours as string). Return as JSON array called "businesses".`;
@@ -236,44 +237,19 @@ export async function scrapeYelp(zipCode: string): Promise<ScrapedRestaurant[]> 
     return restaurants;
 }
 
-// ===== MAIN SCRAPER =====
-export async function scrapeAllSources(zipCode: string, lat: number, lng: number): Promise<WingSpot[]> {
+// Helper function to process restaurants into WingSpots
+function processRestaurants(
+    restaurants: ScrapedRestaurant[],
+    zipCode: string,
+    lat: number,
+    lng: number
+): WingSpot[] {
     const wingSpots: WingSpot[] = [];
 
-    // Scrape all sources in parallel using Promise.allSettled for fault tolerance
-    // If one source fails, we still get results from the others
-    const results = await Promise.allSettled([
-        scrapeDoorDash(zipCode),
-        scrapeUberEats(zipCode),
-        scrapeGrubhub(zipCode),
-        scrapeYelp(zipCode),
-    ]);
-
-    // Extract successful results, log failures
-    const allRestaurants: ScrapedRestaurant[] = [];
-    const sourceNames = ['DoorDash', 'UberEats', 'Grubhub', 'Yelp'];
-
-    results.forEach((result, index) => {
-        if (result.status === 'fulfilled') {
-            allRestaurants.push(...result.value);
-        } else {
-            console.error(`${sourceNames[index]} scraper failed:`, result.reason);
-        }
-    });
-
-    for (const restaurant of allRestaurants) {
-        // Process menu if image available
-        let pricePerWing: number | null = null;
-        let dealText: string | null = null;
-
-        if (restaurant.image_url) {
-            const menuItems = await extractWingMenuFromImage(restaurant.image_url);
-            const bestDeal = findBestWingDeal(menuItems);
-            if (bestDeal) {
-                pricePerWing = bestDeal.price_per_wing || null;
-                dealText = bestDeal.is_deal ? bestDeal.name : null;
-            }
-        }
+    for (const restaurant of restaurants) {
+        // Skip OCR processing for speed - can add later if needed
+        const pricePerWing: number | null = null;
+        const dealText: string | null = null;
 
         // Parse delivery time
         let deliveryMins: number | null = null;
@@ -307,11 +283,81 @@ export async function scrapeAllSources(zipCode: string, lat: number, lng: number
         wingSpots.push(spot as WingSpot);
     }
 
-    // Deduplicate restaurants that appear on multiple platforms
-    // Keeps the one with best status/price/delivery time
+    return wingSpots;
+}
+
+// ===== MAIN SCRAPER =====
+// Scrapes sources SEQUENTIALLY with early exit to avoid Vercel timeout
+export async function scrapeAllSources(zipCode: string, lat: number, lng: number): Promise<WingSpot[]> {
+    const allRestaurants: ScrapedRestaurant[] = [];
+    const MIN_RESULTS = 3; // Return early if we have at least this many results
+
+    console.log(`Starting scrape for zip: ${zipCode}`);
+
+    // Try Yelp first (most reliable for local search)
+    try {
+        console.log('Trying Yelp...');
+        const yelpResults = await scrapeYelp(zipCode);
+        allRestaurants.push(...yelpResults);
+        console.log(`Yelp returned ${yelpResults.length} results`);
+
+        // Early exit if we have enough results
+        if (allRestaurants.length >= MIN_RESULTS) {
+            console.log(`Got ${allRestaurants.length} results, returning early`);
+            const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
+            return deduplicateWingSpots(wingSpots);
+        }
+    } catch (error) {
+        console.error('Yelp scrape failed:', error);
+    }
+
+    // Try DoorDash
+    try {
+        console.log('Trying DoorDash...');
+        const ddResults = await scrapeDoorDash(zipCode);
+        allRestaurants.push(...ddResults);
+        console.log(`DoorDash returned ${ddResults.length} results`);
+
+        if (allRestaurants.length >= MIN_RESULTS) {
+            console.log(`Got ${allRestaurants.length} results, returning early`);
+            const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
+            return deduplicateWingSpots(wingSpots);
+        }
+    } catch (error) {
+        console.error('DoorDash scrape failed:', error);
+    }
+
+    // Try Grubhub if we still need more results
+    try {
+        console.log('Trying Grubhub...');
+        const ghResults = await scrapeGrubhub(zipCode);
+        allRestaurants.push(...ghResults);
+        console.log(`Grubhub returned ${ghResults.length} results`);
+
+        if (allRestaurants.length >= MIN_RESULTS) {
+            console.log(`Got ${allRestaurants.length} results, returning early`);
+            const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
+            return deduplicateWingSpots(wingSpots);
+        }
+    } catch (error) {
+        console.error('Grubhub scrape failed:', error);
+    }
+
+    // Try UberEats last
+    try {
+        console.log('Trying UberEats...');
+        const ueResults = await scrapeUberEats(zipCode);
+        allRestaurants.push(...ueResults);
+        console.log(`UberEats returned ${ueResults.length} results`);
+    } catch (error) {
+        console.error('UberEats scrape failed:', error);
+    }
+
+    // Process all results
+    const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
     const deduplicatedSpots = deduplicateWingSpots(wingSpots);
 
-    console.log(`Scraped ${wingSpots.length} spots, ${deduplicatedSpots.length} unique after deduplication`);
+    console.log(`Total: ${wingSpots.length} spots, ${deduplicatedSpots.length} unique after deduplication`);
 
     return deduplicatedSpots;
 }
