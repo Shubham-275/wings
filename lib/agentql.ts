@@ -17,6 +17,21 @@ if (!MINO_API_KEY) {
     console.warn('Warning: MINO API KEY (AGENTQL_API_KEY) not set. Scraping will be disabled.');
 }
 
+// Timeout helper for graceful timeout handling
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+    let timeoutId: NodeJS.Timeout;
+    const timeoutPromise = new Promise<T>((resolve) => {
+        timeoutId = setTimeout(() => {
+            console.warn(`Operation timed out after ${timeoutMs}ms`);
+            resolve(fallback);
+        }, timeoutMs);
+    });
+    return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
+}
+
+// Scraper timeout constant
+const SCRAPER_TIMEOUT = 25000; // 25 seconds per source
+
 // Mino API response interface
 interface MinoResponse {
     type?: string;
@@ -205,8 +220,8 @@ export async function scrapeGoogle(zipCode: string): Promise<ScrapedRestaurant[]
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        const searchUrl = `https://www.google.com/search?q=chicken+wings+shops+in+usa+${zipCode}`;
-        const goal = `Extract chicken wings restaurants from Google search results. Return a JSON array called "businesses" with these fields for each restaurant listing: name, address, rating (number like 4.2), phone, hours (like "Closed · Opens 11 am"), image (image URL if visible). Extract all visible restaurant listings from the search results.`;
+        const searchUrl = `https://www.google.com/search?q=chicken+wings+restaurants+near+${zipCode}`;
+        const goal = `Extract ALL chicken wings restaurants visible on this Google search results page. Scroll down if needed to find more results. Return a JSON array called "businesses" with these fields for each restaurant: name (restaurant name), address (full street address), rating (number like 4.2), phone (phone number if visible), hours (like "Closed · Opens 11 am" or "Open · Closes 10 pm"), image (image URL if visible). Extract every restaurant listing you can find, aim for at least 10-15 results.`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
@@ -298,73 +313,32 @@ function processRestaurants(
 }
 
 // ===== MAIN SCRAPER =====
-// Scrapes sources SEQUENTIALLY with early exit to avoid Vercel timeout
+// Scrapes ALL sources in PARALLEL for maximum results
 export async function scrapeAllSources(zipCode: string, lat: number, lng: number): Promise<WingSpot[]> {
+    console.log(`Starting parallel scrape for zip: ${zipCode}`);
+
+    // Run ALL scrapers in parallel with timeout protection
+    const results = await Promise.allSettled([
+        withTimeout(scrapeGoogle(zipCode), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeDoorDash(zipCode), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeGrubhub(zipCode), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeUberEats(zipCode), SCRAPER_TIMEOUT, []),
+    ]);
+
     const allRestaurants: ScrapedRestaurant[] = [];
-    const MIN_RESULTS = 3; // Return early if we have at least this many results
+    const sourceNames = ['Google', 'DoorDash', 'Grubhub', 'UberEats'];
 
-    console.log(`Starting scrape for zip: ${zipCode}`);
-
-    // Try Google first (most reliable, doesn't block scrapers)
-    try {
-        console.log('Trying Google...');
-        const googleResults = await scrapeGoogle(zipCode);
-        allRestaurants.push(...googleResults);
-        console.log(`Google returned ${googleResults.length} results`);
-
-        // Early exit if we have enough results
-        if (allRestaurants.length >= MIN_RESULTS) {
-            console.log(`Got ${allRestaurants.length} results, returning early`);
-            const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
-            return deduplicateWingSpots(wingSpots);
+    // Collect results from ALL successful scrapes
+    results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+            console.log(`${sourceNames[index]}: ${result.value.length} results`);
+            allRestaurants.push(...result.value);
+        } else {
+            console.error(`${sourceNames[index]} failed:`, result.reason);
         }
-    } catch (error) {
-        console.error('Google scrape failed:', error);
-    }
+    });
 
-    // Try DoorDash
-    try {
-        console.log('Trying DoorDash...');
-        const ddResults = await scrapeDoorDash(zipCode);
-        allRestaurants.push(...ddResults);
-        console.log(`DoorDash returned ${ddResults.length} results`);
-
-        if (allRestaurants.length >= MIN_RESULTS) {
-            console.log(`Got ${allRestaurants.length} results, returning early`);
-            const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
-            return deduplicateWingSpots(wingSpots);
-        }
-    } catch (error) {
-        console.error('DoorDash scrape failed:', error);
-    }
-
-    // Try Grubhub if we still need more results
-    try {
-        console.log('Trying Grubhub...');
-        const ghResults = await scrapeGrubhub(zipCode);
-        allRestaurants.push(...ghResults);
-        console.log(`Grubhub returned ${ghResults.length} results`);
-
-        if (allRestaurants.length >= MIN_RESULTS) {
-            console.log(`Got ${allRestaurants.length} results, returning early`);
-            const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
-            return deduplicateWingSpots(wingSpots);
-        }
-    } catch (error) {
-        console.error('Grubhub scrape failed:', error);
-    }
-
-    // Try UberEats last
-    try {
-        console.log('Trying UberEats...');
-        const ueResults = await scrapeUberEats(zipCode);
-        allRestaurants.push(...ueResults);
-        console.log(`UberEats returned ${ueResults.length} results`);
-    } catch (error) {
-        console.error('UberEats scrape failed:', error);
-    }
-
-    // Process all results
+    // Process ALL results
     const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
     const deduplicatedSpots = deduplicateWingSpots(wingSpots);
 

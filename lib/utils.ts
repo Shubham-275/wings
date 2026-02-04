@@ -239,6 +239,14 @@ export function getGoogleMapsUrl(address: string): string {
 }
 
 /**
+ * Generate Google search URL for ordering from a restaurant
+ */
+export function getOrderSearchUrl(name: string, address: string): string {
+    const searchQuery = `${name} near ${address} order online`;
+    return `https://www.google.com/search?q=${encodeURIComponent(searchQuery)}`;
+}
+
+/**
  * Generate tel: link
  */
 export function getTelLink(phone: string): string {

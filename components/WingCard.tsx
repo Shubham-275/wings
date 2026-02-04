@@ -3,7 +3,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { WingSpot } from '@/lib/types';
-import { formatPricePerWing, formatDeliveryTime, formatRelativeTime, getGoogleMapsUrl, getTelLink, getStatusBorderClass } from '@/lib/utils';
+import { formatPricePerWing, formatDeliveryTime, formatRelativeTime, getGoogleMapsUrl, getOrderSearchUrl, getTelLink, getStatusBorderClass } from '@/lib/utils';
 import { StatusBadge } from './ui/Badge';
 import { Button } from './ui/Button';
 
@@ -120,7 +120,11 @@ export function WingCard({ spot, onClose }: WingCardProps) {
 
             {/* Actions */}
             <div className="flex gap-2">
-                <Button variant="primary" className="flex-1">
+                <Button
+                    variant="primary"
+                    className="flex-1"
+                    onClick={() => window.open(getOrderSearchUrl(spot.name, spot.address), '_blank', 'noopener,noreferrer')}
+                >
                     Order Now
                 </Button>
                 {spot.phone && (
