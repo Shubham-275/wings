@@ -30,26 +30,39 @@ const queryClient = new QueryClient({
     },
 });
 
-// Persist query cache to sessionStorage to survive page refreshes
-if (typeof window !== 'undefined') {
-    const persister = createSyncStoragePersister({
-        storage: window.sessionStorage,
-        key: 'wing-scout-query-cache',
-    });
-
-    persistQueryClient({
-        queryClient,
-        persister,
-        maxAge: CACHE_DURATION_MS,
-    });
-}
+// Flag to track if persister has been set up
+let persisterInitialized = false;
 
 function HomeContent() {
-    // Restore last searched zip from sessionStorage on mount
-    const [zipCode, setZipCode] = useState<string>(() => {
-        if (typeof window === 'undefined') return '';
-        return sessionStorage.getItem(LAST_ZIP_KEY) || '';
-    });
+    // Initialize zip code as empty to avoid hydration mismatch
+    // sessionStorage will be read in useEffect after hydration
+    const [zipCode, setZipCode] = useState<string>('');
+    const [isHydrated, setIsHydrated] = useState(false);
+
+    // Set up persister and restore state after hydration (client-side only)
+    useEffect(() => {
+        // Set up query persister once
+        if (!persisterInitialized && typeof window !== 'undefined') {
+            const persister = createSyncStoragePersister({
+                storage: window.sessionStorage,
+                key: 'wing-scout-query-cache',
+            });
+
+            persistQueryClient({
+                queryClient,
+                persister,
+                maxAge: CACHE_DURATION_MS,
+            });
+            persisterInitialized = true;
+        }
+
+        // Restore last searched zip from sessionStorage
+        const savedZip = sessionStorage.getItem(LAST_ZIP_KEY);
+        if (savedZip && savedZip.length === 5) {
+            setZipCode(savedZip);
+        }
+        setIsHydrated(true);
+    }, []);
     const [selectedSpot, setSelectedSpot] = useState<WingSpot | null>(null);
     const [viewport, setViewport] = useState<MapViewport>({
         latitude: 39.8283,

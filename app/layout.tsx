@@ -20,6 +20,9 @@ export const metadata: Metadata = {
     description: 'Find the best chicken wings near you for Super Bowl LX. Real-time availability, prices, and deals from DoorDash, Uber Eats, Grubhub, and local spots.',
     keywords: ['chicken wings', 'super bowl', 'wing deals', 'food delivery', 'game day food'],
     authors: [{ name: 'Wing Scout' }],
+    icons: {
+        icon: '/icon.svg',
+    },
     openGraph: {
         title: 'Wing Scout | Super Bowl LX Wing Tracker',
         description: 'Real-time chicken wing availability for Super Bowl LX',
