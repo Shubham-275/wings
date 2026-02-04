@@ -216,12 +216,29 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
 
 // ===== GOOGLE SCRAPER =====
 // Using Google Search instead of Yelp because Yelp blocks scrapers
+// Enhanced for Hidden Gem Detection - finds local spots, not just chains
 export async function scrapeGoogle(zipCode: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        const searchUrl = `https://www.google.com/search?q=chicken+wings+restaurants+near+${zipCode}`;
-        const goal = `Extract ALL chicken wings restaurants visible on this Google search results page. Scroll down if needed to find more results. Return a JSON array called "businesses" with these fields for each restaurant: name (restaurant name), address (full street address), rating (number like 4.2), phone (phone number if visible), hours (like "Closed · Opens 11 am" or "Open · Closes 10 pm"), image (image URL if visible). Extract every restaurant listing you can find, aim for at least 10-15 results.`;
+        // Search query targets local spots and hidden gems
+        const searchUrl = `https://www.google.com/search?q=best+chicken+wings+local+sports+bar+${zipCode}`;
+        const goal = `Extract ALL chicken wings restaurants visible on this Google search results page.
+IMPORTANT: Include local establishments like:
+- Family-owned restaurants and pizzerias with wings
+- Sports bars and dive bars serving wings
+- Local BBQ joints and wing shops
+- Small independent restaurants
+- Any place serving chicken wings
+NOT just major chains like Buffalo Wild Wings, Wingstop, or Hooters.
+Return a JSON array called "businesses" with these fields for each restaurant:
+- name (restaurant name)
+- address (full street address)
+- rating (number like 4.2)
+- phone (phone number if visible)
+- hours (like "Closed · Opens 11 am" or "Open · Closes 10 pm")
+- image (image URL if visible)
+Scroll down and extract every restaurant listing. Aim for 10-20+ diverse results including hidden gems and local favorites.`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
