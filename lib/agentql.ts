@@ -29,13 +29,13 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
 
-// Scraper timeout constant
-const SCRAPER_TIMEOUT = 25000; // 25 seconds per source
+// Scraper timeout constant - increased for Fluid Compute (300s max on Vercel Hobby)
+const SCRAPER_TIMEOUT = 90000; // 90 seconds per source to allow Mino to complete
 
 // Mino API response interface
 interface MinoResponse {
-    type?: string;
-    status?: string;
+    type?: string;      // e.g., "COMPLETE", "PROGRESS", etc.
+    status?: string;    // e.g., "COMPLETED", "RUNNING", etc.
     resultJson?: unknown;
     error?: string;
 }
@@ -64,12 +64,13 @@ async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResp
                     'Content-Type': 'application/json',
                     'Accept': 'text/event-stream',
                 },
-                timeout: 25000, // 25 second timeout to fit within Vercel's limits
+                timeout: 90000, // 90 second timeout - Fluid Compute allows up to 300s
                 responseType: 'text', // SSE returns text stream
             }
         );
 
         // Parse SSE response - Mino returns event stream
+        // Only the COMPLETE event with COMPLETED status contains resultJson
         const responseText = response.data as string;
         const lines = responseText.split('\n');
         let resultData: unknown = null;
@@ -78,12 +79,19 @@ async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResp
             if (line.startsWith('data: ')) {
                 try {
                     const eventData = JSON.parse(line.slice(6)) as MinoResponse;
-                    if (eventData.resultJson) {
-                        resultData = eventData.resultJson;
-                    }
+
+                    // Check for errors
                     if (eventData.error) {
                         console.error('Mino error:', eventData.error);
                         return { success: false, data: null, error: eventData.error };
+                    }
+
+                    // Only extract resultJson from COMPLETE event with COMPLETED status
+                    if (eventData.type === 'COMPLETE' && eventData.status === 'COMPLETED') {
+                        if (eventData.resultJson) {
+                            console.log('Mino COMPLETE event received with resultJson');
+                            resultData = eventData.resultJson;
+                        }
                     }
                 } catch {
                     // Skip non-JSON lines
@@ -95,6 +103,7 @@ async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResp
             return { success: true, data: resultData };
         }
 
+        console.error('No COMPLETE event with resultJson found in Mino response');
         return { success: false, data: null, error: 'No result data in response' };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';

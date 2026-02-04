@@ -7,7 +7,7 @@ import { isValidZipCode, cleanZipCode, calculateAvailability } from '@/lib/utils
 import { ScrapeResponse } from '@/lib/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 300; // 5 minutes - Fluid Compute on Vercel Hobby allows up to 300s
 
 // In-flight request deduplication
 // Prevents duplicate scrapes for the same zip code when multiple requests come in simultaneously
