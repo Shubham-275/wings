@@ -3,7 +3,7 @@
 // ===========================================
 
 import axios from 'axios';
-import { ScrapedRestaurant, WingSpot, AgentQLResponse } from './types';
+import { ScrapedRestaurant, WingSpot, AgentQLResponse, PlatformIds } from './types';
 import { calculateStatus, deduplicateWingSpots } from './utils';
 // OCR imports removed for speed - can add back later if needed
 // import { extractWingMenuFromImage, findBestWingDeal } from './ocr';
@@ -40,7 +40,7 @@ interface MinoResponse {
     error?: string;
 }
 
-async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResponse> {
+export async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResponse> {
     // Early return if API key is not configured
     if (!MINO_API_KEY) {
         console.error('Mino API key not configured');
@@ -119,7 +119,7 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
     try {
         // Include zip code in search to get location-specific results
         const searchUrl = `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean). Return as JSON array called "restaurants".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
@@ -129,6 +129,10 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
 
         const data = result.data as { restaurants?: Array<Record<string, unknown>> };
         for (const r of data.restaurants || []) {
+            // Extract store ID from URL
+            const storeUrl = String(r.store_url || '');
+            const storeIdMatch = storeUrl.match(/\/store\/(\d+)/);
+
             restaurants.push({
                 name: String(r.name || 'Unknown'),
                 address: String(r.address || ''),
@@ -138,6 +142,8 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
                 is_open: Boolean(r.is_open),
                 source: 'doordash',
                 menu_items: [],
+                store_id: storeIdMatch ? storeIdMatch[1] : undefined,
+                source_url: storeUrl ? `https://www.doordash.com${storeUrl}` : undefined,
             });
         }
         console.log(`DoorDash: Found ${restaurants.length} restaurants`);
@@ -155,7 +161,7 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
     try {
         // Include zip code in search to get location-specific results
         const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings%20near%20${zipCode}`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean). Return as JSON array called "stores".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean), store_url (the UberEats URL path like /store/restaurant-name/uuid). Return as JSON array called "stores".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
@@ -165,6 +171,10 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
 
         const data = result.data as { stores?: Array<Record<string, unknown>> };
         for (const s of data.stores || []) {
+            // Extract UUID from URL (last segment)
+            const storeUrl = String(s.store_url || '');
+            const uuidMatch = storeUrl.match(/\/store\/[^/]+\/([a-f0-9-]{36})/i);
+
             restaurants.push({
                 name: String(s.name || 'Unknown'),
                 address: String(s.address || ''),
@@ -174,6 +184,8 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
                 is_open: Boolean(s.is_available),
                 source: 'ubereats',
                 menu_items: [],
+                store_uuid: uuidMatch ? uuidMatch[1] : undefined,
+                source_url: storeUrl ? `https://www.ubereats.com${storeUrl}` : undefined,
             });
         }
         console.log(`UberEats: Found ${restaurants.length} restaurants`);
@@ -191,7 +203,7 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
     try {
         // Include zip code in search to get location-specific results
         const searchUrl = `https://www.grubhub.com/search?query=chicken+wings+near+${zipCode}&locationMode=DELIVERY`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean). Return as JSON array called "restaurants".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean), restaurant_url (the Grubhub URL path like /restaurant/name/12345). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
@@ -201,6 +213,10 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
 
         const data = result.data as { restaurants?: Array<Record<string, unknown>> };
         for (const r of data.restaurants || []) {
+            // Extract restaurant ID from URL
+            const restaurantUrl = String(r.restaurant_url || '');
+            const idMatch = restaurantUrl.match(/\/restaurant\/[^/]+\/(\d+)/);
+
             restaurants.push({
                 name: String(r.name || 'Unknown'),
                 address: String(r.address || ''),
@@ -210,6 +226,8 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
                 is_open: Boolean(r.is_open),
                 source: 'grubhub',
                 menu_items: [],
+                restaurant_id: idMatch ? idMatch[1] : undefined,
+                source_url: restaurantUrl ? `https://www.grubhub.com${restaurantUrl}` : undefined,
             });
         }
         console.log(`Grubhub: Found ${restaurants.length} restaurants`);
@@ -307,6 +325,13 @@ function processRestaurants(
             if (match) deliveryMins = parseInt(match[1], 10);
         }
 
+        // Build platform_ids for menu fetching
+        const platformIds: PlatformIds = {};
+        if (restaurant.store_id) platformIds.doordash_store_id = restaurant.store_id;
+        if (restaurant.store_uuid) platformIds.ubereats_store_uuid = restaurant.store_uuid;
+        if (restaurant.restaurant_id) platformIds.grubhub_restaurant_id = restaurant.restaurant_id;
+        if (restaurant.source_url) platformIds.source_url = restaurant.source_url;
+
         const spot: Omit<WingSpot, 'status'> & { status?: WingSpot['status'] } = {
             id: `${restaurant.source}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
             name: restaurant.name,
@@ -326,6 +351,7 @@ function processRestaurants(
             source: restaurant.source,
             zip_code: zipCode,
             last_updated: new Date().toISOString(),
+            platform_ids: Object.keys(platformIds).length > 0 ? platformIds : undefined,
         };
 
         spot.status = calculateStatus(spot);

@@ -36,6 +36,8 @@ export interface WingSpot {
     zip_code: string;
     last_updated: string;
     created_at?: string;
+    // Platform identifiers for menu fetching
+    platform_ids?: PlatformIds;
 }
 
 /**
@@ -87,6 +89,46 @@ export interface MenuItem {
 }
 
 /**
+ * Platform-specific identifiers for menu lookups
+ */
+export interface PlatformIds {
+    doordash_store_id?: string;
+    ubereats_store_uuid?: string;
+    grubhub_restaurant_id?: string;
+    source_url?: string;
+}
+
+/**
+ * Menu section (e.g., "Wings", "Appetizers")
+ */
+export interface MenuSection {
+    name: string;
+    items: MenuItem[];
+}
+
+/**
+ * Full menu structure
+ */
+export interface Menu {
+    spot_id: string;
+    sections: MenuSection[];
+    fetched_at: string;
+    source: 'yelp' | 'mino_scrape' | 'cached';
+    has_wings: boolean;
+    wing_section_index?: number;
+}
+
+/**
+ * Menu API response
+ */
+export interface MenuResponse {
+    success: boolean;
+    menu: Menu | null;
+    cached: boolean;
+    message: string;
+}
+
+/**
  * Scraped restaurant data (raw)
  */
 export interface ScrapedRestaurant {
@@ -101,6 +143,11 @@ export interface ScrapedRestaurant {
     menu_items: MenuItem[];
     is_open?: boolean;
     source: WingSource;
+    // Platform-specific IDs for menu fetching
+    store_id?: string;      // DoorDash store ID
+    store_uuid?: string;    // UberEats store UUID
+    restaurant_id?: string; // Grubhub restaurant ID
+    source_url?: string;    // Full URL to restaurant page
 }
 
 /**

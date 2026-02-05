@@ -1,11 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import Image from 'next/image';
 import { WingSpot } from '@/lib/types';
 import { formatPricePerWing, formatDeliveryTime, formatRelativeTime, getGoogleMapsUrl, getOrderSearchUrl, getTelLink, getStatusBorderClass } from '@/lib/utils';
 import { StatusBadge } from './ui/Badge';
 import { Button } from './ui/Button';
+import { MenuView } from './MenuView';
 
 interface WingCardProps {
     spot: WingSpot;
@@ -13,6 +14,7 @@ interface WingCardProps {
 }
 
 export function WingCard({ spot, onClose }: WingCardProps) {
+    const [showMenu, setShowMenu] = useState(false);
     return (
         <div className="space-y-4">
             {/* Header with image */}
@@ -109,6 +111,24 @@ export function WingCard({ spot, onClose }: WingCardProps) {
                             {spot.phone}
                         </a>
                     </div>
+                )}
+            </div>
+
+            {/* Menu Section */}
+            <div className="py-3 border-b border-gridiron-border">
+                {!showMenu ? (
+                    <Button
+                        variant="ghost"
+                        className="w-full justify-center"
+                        onClick={() => setShowMenu(true)}
+                    >
+                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
+                        </svg>
+                        View Menu
+                    </Button>
+                ) : (
+                    <MenuView spotId={spot.id} spotName={spot.name} />
                 )}
             </div>
 

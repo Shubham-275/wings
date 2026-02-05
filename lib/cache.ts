@@ -3,7 +3,7 @@
 // ===========================================
 
 import { Redis } from '@upstash/redis';
-import { WingSpot, GeocodedLocation, ScrapeResponse } from './types';
+import { WingSpot, GeocodedLocation, ScrapeResponse, Menu } from './types';
 
 // Validate Redis environment variables
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
@@ -190,6 +190,55 @@ export async function getCacheStats(): Promise<{
             connected: false,
             info: `Redis error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         };
+    }
+}
+
+// ===========================================
+// Menu Caching
+// ===========================================
+
+// Menu cache TTL (1 hour)
+const MENU_TTL = 60 * 60;
+
+/**
+ * Cache key for menus
+ */
+const menuKey = (spotId: string) => `menu:${spotId}`;
+
+/**
+ * Get cached menu for a spot
+ */
+export async function getCachedMenu(spotId: string): Promise<Menu | null> {
+    if (!redis) return null;
+    try {
+        return await redis.get<Menu>(menuKey(spotId));
+    } catch (error) {
+        console.error('Redis getCachedMenu error:', error);
+        return null;
+    }
+}
+
+/**
+ * Cache menu for a spot (1-hour TTL)
+ */
+export async function cacheMenu(spotId: string, menu: Menu): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.set(menuKey(spotId), menu, { ex: MENU_TTL });
+    } catch (error) {
+        console.error('Redis cacheMenu error:', error);
+    }
+}
+
+/**
+ * Invalidate cached menu
+ */
+export async function invalidateMenuCache(spotId: string): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.del(menuKey(spotId));
+    } catch (error) {
+        console.error('Redis invalidateMenuCache error:', error);
     }
 }
 
