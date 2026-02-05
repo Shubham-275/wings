@@ -117,10 +117,9 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Removed delay to speed up scraping
-
-        const searchUrl = `https://www.doordash.com/search/store/chicken%20wings/?pickup=false`;
-        const goal = `Search for chicken wings restaurants and extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean). Return as JSON array called "restaurants".`;
+        // Include zip code in search to get location-specific results
+        const searchUrl = `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
@@ -154,10 +153,9 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Removed delay to speed up scraping
-
-        const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings`;
-        const goal = `Search for chicken wings restaurants and extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean). Return as JSON array called "stores".`;
+        // Include zip code in search to get location-specific results
+        const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings%20near%20${zipCode}`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean). Return as JSON array called "stores".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
@@ -191,10 +189,9 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Removed delay to speed up scraping
-
-        const searchUrl = `https://www.grubhub.com/search?query=chicken+wings&locationMode=DELIVERY`;
-        const goal = `Search for chicken wings restaurants and extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean). Return as JSON array called "restaurants".`;
+        // Include zip code in search to get location-specific results
+        const searchUrl = `https://www.grubhub.com/search?query=chicken+wings+near+${zipCode}&locationMode=DELIVERY`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) {
