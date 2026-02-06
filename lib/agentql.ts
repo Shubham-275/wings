@@ -1,23 +1,22 @@
 // ===========================================
-// Wing Scout - Mino AI Web Scraper
+// Wing Scout v2 — Mino AI Web Scraper
+// Flavor-aware parallel scraping engine
+// Uses agent.tinyfish.ai sync endpoint (mino.ai CloudFront blocks POST)
 // ===========================================
 
-import axios from 'axios';
-import { ScrapedRestaurant, WingSpot, AgentQLResponse, PlatformIds } from './types';
-import { calculateStatus, deduplicateWingSpots } from './utils';
-// OCR imports removed for speed - can add back later if needed
-// import { extractWingMenuFromImage, findBestWingDeal } from './ocr';
+import { ScrapedRestaurant, WingSpot, AgentQLResponse, PlatformIds, FlavorPersona } from './types';
+import { calculateStatus, deduplicateWingSpots, getFlavorPersona, scoreSpotFlavor } from './utils';
 
-// Mino API Configuration
-const MINO_API_URL = process.env.AGENTQL_API_URL || 'https://mino.ai/v1/automation/run-sse';
+// Mino API Configuration — agent.tinyfish.ai is the actual API server
+// mino.ai/v1 redirects there but CloudFront blocks POST, so we hit the origin directly
+const MINO_API_URL = process.env.AGENTQL_API_URL || 'https://agent.tinyfish.ai/v1/automation/run';
 const MINO_API_KEY = process.env.AGENTQL_API_KEY || '';
 
-// Warn if API key is missing (will fail gracefully at runtime)
 if (!MINO_API_KEY) {
     console.warn('Warning: MINO API KEY (AGENTQL_API_KEY) not set. Scraping will be disabled.');
 }
 
-// Timeout helper for graceful timeout handling
+// Timeout helper
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
     let timeoutId: NodeJS.Timeout;
     const timeoutPromise = new Promise<T>((resolve) => {
@@ -29,19 +28,20 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
     return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timeoutId));
 }
 
-// Scraper timeout constant - increased for Fluid Compute (300s max on Vercel Hobby)
-const SCRAPER_TIMEOUT = 90000; // 90 seconds per source to allow Mino to complete
+// Render has unlimited runtime, but individual scraper calls still need per-source limits
+const SCRAPER_TIMEOUT = 120000; // 120 seconds per source
 
-// Mino API response interface
-interface MinoResponse {
-    type?: string;      // e.g., "COMPLETE", "PROGRESS", etc.
-    status?: string;    // e.g., "COMPLETED", "RUNNING", etc.
-    resultJson?: unknown;
-    error?: string;
+interface MinoSyncResponse {
+    run_id: string;
+    status: 'COMPLETED' | 'FAILED' | 'CANCELLED';
+    started_at: string;
+    finished_at: string;
+    num_of_steps: number;
+    result: unknown;
+    error: string | null;
 }
 
 export async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResponse> {
-    // Early return if API key is not configured
     if (!MINO_API_KEY) {
         console.error('Mino API key not configured');
         return { success: false, data: null, error: 'MINO API KEY not configured' };
@@ -49,65 +49,50 @@ export async function executeMinoScrape(url: string, goal: string): Promise<Agen
 
     try {
         console.log(`Mino scraping: ${url}`);
-        console.log(`Goal: ${goal}`);
 
-        const response = await axios.post(
-            MINO_API_URL,
-            {
-                url,
-                goal,
-                browserProfile: 'lite', // Use lite mode for faster scraping
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), SCRAPER_TIMEOUT);
+
+        const response = await fetch(MINO_API_URL, {
+            method: 'POST',
+            headers: {
+                'X-API-Key': MINO_API_KEY,
+                'Content-Type': 'application/json',
             },
-            {
-                headers: {
-                    'X-API-Key': MINO_API_KEY,
-                    'Content-Type': 'application/json',
-                    'Accept': 'text/event-stream',
-                },
-                timeout: 90000, // 90 second timeout - Fluid Compute allows up to 300s
-                responseType: 'text', // SSE returns text stream
-            }
-        );
+            body: JSON.stringify({ url, goal }),
+            signal: controller.signal,
+            cache: 'no-store',
+        });
 
-        // Parse SSE response - Mino returns event stream
-        // Only the COMPLETE event with COMPLETED status contains resultJson
-        const responseText = response.data as string;
-        const lines = responseText.split('\n');
-        let resultData: unknown = null;
+        clearTimeout(timeoutId);
 
-        for (const line of lines) {
-            if (line.startsWith('data: ')) {
-                try {
-                    const eventData = JSON.parse(line.slice(6)) as MinoResponse;
-
-                    // Check for errors
-                    if (eventData.error) {
-                        console.error('Mino error:', eventData.error);
-                        return { success: false, data: null, error: eventData.error };
-                    }
-
-                    // Only extract resultJson from COMPLETE event with COMPLETED status
-                    if (eventData.type === 'COMPLETE' && eventData.status === 'COMPLETED') {
-                        if (eventData.resultJson) {
-                            console.log('Mino COMPLETE event received with resultJson');
-                            resultData = eventData.resultJson;
-                        }
-                    }
-                } catch {
-                    // Skip non-JSON lines
-                }
-            }
+        if (!response.ok) {
+            const errText = await response.text();
+            console.error(`Mino HTTP ${response.status}:`, errText.substring(0, 200));
+            return { success: false, data: null, error: `HTTP ${response.status}: ${errText.substring(0, 200)}` };
         }
 
-        if (resultData) {
-            return { success: true, data: resultData };
+        const data = await response.json() as MinoSyncResponse;
+
+        if (data.error) {
+            console.error('Mino error:', data.error);
+            return { success: false, data: null, error: data.error };
         }
 
-        console.error('No COMPLETE event with resultJson found in Mino response');
-        return { success: false, data: null, error: 'No result data in response' };
+        if (data.status === 'COMPLETED' && data.result) {
+            console.log(`Mino COMPLETED (${data.num_of_steps} steps, ${data.run_id})`);
+            return { success: true, data: data.result };
+        }
+
+        console.error(`Mino status: ${data.status}, no result`);
+        return { success: false, data: null, error: `Mino status: ${data.status}` };
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        console.error('Mino API error:', errorMessage);
+        if (errorMessage.includes('abort')) {
+            console.error(`Mino timeout after ${SCRAPER_TIMEOUT}ms for: ${url}`);
+        } else {
+            console.error('Mino API error:', errorMessage);
+        }
         return { success: false, data: null, error: errorMessage };
     }
 }
@@ -117,19 +102,14 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Include zip code in search to get location-specific results
         const searchUrl = `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
         const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
-        if (!result.success || !result.data) {
-            console.log('DoorDash: No results from Mino');
-            return restaurants;
-        }
+        if (!result.success || !result.data) return restaurants;
 
         const data = result.data as { restaurants?: Array<Record<string, unknown>> };
         for (const r of data.restaurants || []) {
-            // Extract store ID from URL
             const storeUrl = String(r.store_url || '');
             const storeIdMatch = storeUrl.match(/\/store\/(\d+)/);
 
@@ -159,19 +139,14 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Include zip code in search to get location-specific results
         const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings%20near%20${zipCode}`;
         const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean), store_url (the UberEats URL path like /store/restaurant-name/uuid). Return as JSON array called "stores".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
-        if (!result.success || !result.data) {
-            console.log('UberEats: No results from Mino');
-            return restaurants;
-        }
+        if (!result.success || !result.data) return restaurants;
 
         const data = result.data as { stores?: Array<Record<string, unknown>> };
         for (const s of data.stores || []) {
-            // Extract UUID from URL (last segment)
             const storeUrl = String(s.store_url || '');
             const uuidMatch = storeUrl.match(/\/store\/[^/]+\/([a-f0-9-]{36})/i);
 
@@ -201,19 +176,14 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Include zip code in search to get location-specific results
         const searchUrl = `https://www.grubhub.com/search?query=chicken+wings+near+${zipCode}&locationMode=DELIVERY`;
         const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean), restaurant_url (the Grubhub URL path like /restaurant/name/12345). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
-        if (!result.success || !result.data) {
-            console.log('Grubhub: No results from Mino');
-            return restaurants;
-        }
+        if (!result.success || !result.data) return restaurants;
 
         const data = result.data as { restaurants?: Array<Record<string, unknown>> };
         for (const r of data.restaurants || []) {
-            // Extract restaurant ID from URL
             const restaurantUrl = String(r.restaurant_url || '');
             const idMatch = restaurantUrl.match(/\/restaurant\/[^/]+\/(\d+)/);
 
@@ -238,14 +208,11 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
     return restaurants;
 }
 
-// ===== GOOGLE SCRAPER =====
-// Using Google Search instead of Yelp because Yelp blocks scrapers
-// Enhanced for Hidden Gem Detection - finds local spots, not just chains
+// ===== GOOGLE SCRAPER (Hidden Gem Detection) =====
 export async function scrapeGoogle(zipCode: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
 
     try {
-        // Search query targets local spots and hidden gems
         const searchUrl = `https://www.google.com/search?q=best+chicken+wings+local+sports+bar+${zipCode}`;
         const goal = `Extract ALL chicken wings restaurants visible on this Google search results page.
 IMPORTANT: Include local establishments like:
@@ -260,19 +227,15 @@ Return a JSON array called "businesses" with these fields for each restaurant:
 - address (full street address)
 - rating (number like 4.2)
 - phone (phone number if visible)
-- hours (like "Closed · Opens 11 am" or "Open · Closes 10 pm")
+- hours (like "Closed - Opens 11 am" or "Open - Closes 10 pm")
 - image (image URL if visible)
 Scroll down and extract every restaurant listing. Aim for 10-20+ diverse results including hidden gems and local favorites.`;
 
         const result = await executeMinoScrape(searchUrl, goal);
-        if (!result.success || !result.data) {
-            console.log('Google: No results from Mino');
-            return restaurants;
-        }
+        if (!result.success || !result.data) return restaurants;
 
         const data = result.data as { businesses?: Array<Record<string, unknown>> };
         for (const b of data.businesses || []) {
-            // Parse hours to determine if open
             const hoursStr = String(b.hours || '');
             const isOpen = !hoursStr.toLowerCase().includes('closed');
 
@@ -296,15 +259,7 @@ Scroll down and extract every restaurant listing. Aim for 10-20+ diverse results
     return restaurants;
 }
 
-// ===== YELP SCRAPER (DEPRECATED - blocks scrapers) =====
-export async function scrapeYelp(zipCode: string): Promise<ScrapedRestaurant[]> {
-    // Yelp blocks scrapers with "You have been blocked" page
-    // Keeping this function for backwards compatibility but it won't be used
-    console.log('Yelp: Skipping - known to block scrapers');
-    return [];
-}
-
-// Helper function to process restaurants into WingSpots
+// ===== PROCESS RESTAURANTS INTO WING SPOTS =====
 function processRestaurants(
     restaurants: ScrapedRestaurant[],
     zipCode: string,
@@ -314,18 +269,15 @@ function processRestaurants(
     const wingSpots: WingSpot[] = [];
 
     for (const restaurant of restaurants) {
-        // Skip OCR processing for speed - can add later if needed
         const pricePerWing: number | null = null;
         const dealText: string | null = null;
 
-        // Parse delivery time
         let deliveryMins: number | null = null;
         if (restaurant.delivery_time) {
             const match = restaurant.delivery_time.match(/(\d+)/);
             if (match) deliveryMins = parseInt(match[1], 10);
         }
 
-        // Build platform_ids for menu fetching
         const platformIds: PlatformIds = {};
         if (restaurant.store_id) platformIds.doordash_store_id = restaurant.store_id;
         if (restaurant.store_uuid) platformIds.ubereats_store_uuid = restaurant.store_uuid;
@@ -361,12 +313,26 @@ function processRestaurants(
     return wingSpots;
 }
 
-// ===== MAIN SCRAPER =====
-// Scrapes ALL sources in PARALLEL for maximum results
-export async function scrapeAllSources(zipCode: string, lat: number, lng: number): Promise<WingSpot[]> {
-    console.log(`Starting parallel scrape for zip: ${zipCode}`);
+// ===== FLAVOR SCORING =====
+// Apply flavor persona scoring to all spots
+function applyFlavorScoring(spots: WingSpot[], flavorId: FlavorPersona): WingSpot[] {
+    const persona = getFlavorPersona(flavorId);
+    return spots.map(spot => ({
+        ...spot,
+        flavor_match: scoreSpotFlavor(spot, persona),
+    }));
+}
 
-    // Run ALL scrapers in parallel with timeout protection
+// ===== MAIN PARALLEL SCRAPER =====
+export async function scrapeAllSources(
+    zipCode: string,
+    lat: number,
+    lng: number,
+    flavor?: FlavorPersona
+): Promise<WingSpot[]> {
+    console.log(`Starting parallel scrape for zip: ${zipCode}${flavor ? ` (flavor: ${flavor})` : ''}`);
+
+    // Fire all scrapers in parallel with Promise.allSettled
     const results = await Promise.allSettled([
         withTimeout(scrapeGoogle(zipCode), SCRAPER_TIMEOUT, []),
         withTimeout(scrapeDoorDash(zipCode), SCRAPER_TIMEOUT, []),
@@ -377,7 +343,6 @@ export async function scrapeAllSources(zipCode: string, lat: number, lng: number
     const allRestaurants: ScrapedRestaurant[] = [];
     const sourceNames = ['Google', 'DoorDash', 'Grubhub', 'UberEats'];
 
-    // Collect results from ALL successful scrapes
     results.forEach((result, index) => {
         if (result.status === 'fulfilled') {
             console.log(`${sourceNames[index]}: ${result.value.length} results`);
@@ -387,11 +352,52 @@ export async function scrapeAllSources(zipCode: string, lat: number, lng: number
         }
     });
 
-    // Process ALL results
-    const wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
-    const deduplicatedSpots = deduplicateWingSpots(wingSpots);
+    // Process + deduplicate
+    let wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
+    wingSpots = deduplicateWingSpots(wingSpots);
 
-    console.log(`Total: ${wingSpots.length} spots, ${deduplicatedSpots.length} unique after deduplication`);
+    // Apply flavor scoring if persona selected
+    if (flavor) {
+        wingSpots = applyFlavorScoring(wingSpots, flavor);
+    }
 
-    return deduplicatedSpots;
+    console.log(`Total: ${allRestaurants.length} raw, ${wingSpots.length} unique after dedup`);
+
+    return wingSpots;
+}
+
+// ===== MENU DEDUPLICATION =====
+// Normalizes menu item names to intelligently merge across platforms
+export function normalizeMenuItem(name: string): string {
+    return name
+        .toLowerCase()
+        .replace(/\d+\s*-?\s*(pc|pcs|piece|pieces|ct|count)/i, '')
+        .replace(/\s*(traditional|boneless|bone-in|classic|original)\s*/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+export function dedupeMenu(
+    items: Array<{ name: string; price?: number | null; source?: string }>
+): Array<{ name: string; price: number | null; source: string }> {
+    const seen = new Map<string, { name: string; price: number | null; source: string }>();
+
+    for (const item of items) {
+        const key = normalizeMenuItem(item.name);
+        const existing = seen.get(key);
+
+        if (!existing) {
+            seen.set(key, { name: item.name, price: item.price ?? null, source: item.source || 'unknown' });
+            continue;
+        }
+
+        // Keep the entry with the lowest price (win condition)
+        const existingPrice = existing.price ?? Infinity;
+        const newPrice = item.price ?? Infinity;
+        if (newPrice < existingPrice) {
+            seen.set(key, { name: item.name, price: item.price ?? null, source: item.source || 'unknown' });
+        }
+    }
+
+    return Array.from(seen.values());
 }

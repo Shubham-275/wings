@@ -1,11 +1,26 @@
 // ===========================================
-// Wing Scout - Type Definitions
+// Wing Scout v2 — Type Definitions
+// "Super Bowl War Room" Edition
 // ===========================================
+
+/**
+ * Flavor Persona — user selects before searching
+ */
+export type FlavorPersona = 'face-melter' | 'classicist' | 'sticky-finger';
+
+export interface FlavorPersonaInfo {
+    id: FlavorPersona;
+    label: string;
+    subtitle: string;
+    keywords: string[];
+    emoji: string;
+    color: string;
+}
 
 /**
  * Source platform for wing data
  */
-export type WingSource = 'doordash' | 'ubereats' | 'grubhub' | 'yelp' | 'google';
+export type WingSource = 'doordash' | 'ubereats' | 'grubhub' | 'google';
 
 /**
  * Pin status color
@@ -36,8 +51,11 @@ export interface WingSpot {
     zip_code: string;
     last_updated: string;
     created_at?: string;
-    // Platform identifiers for menu fetching
     platform_ids?: PlatformIds;
+    // v2 additions
+    flavor_tags?: string[];
+    flavor_match?: number; // 0-100 score against selected persona
+    menu_json?: MenuItemRaw[];
 }
 
 /**
@@ -66,18 +84,35 @@ export interface ScrapeQueueItem {
 }
 
 /**
- * API scrape response
+ * Scout API response (v2 — includes flavor)
  */
-export interface ScrapeResponse {
+export interface ScoutResponse {
     success: boolean;
     spots: WingSpot[];
     cached: boolean;
     message: string;
     location?: GeocodedLocation;
+    flavor?: FlavorPersona;
+}
+
+// Keep ScrapeResponse as alias for backwards compat
+export type ScrapeResponse = ScoutResponse;
+
+/**
+ * Raw menu item from scraping
+ */
+export interface MenuItemRaw {
+    name: string;
+    description?: string;
+    price: number | null;
+    quantity?: number;
+    price_per_wing?: number;
+    is_deal: boolean;
+    flavor_tags?: string[];
 }
 
 /**
- * Menu item extracted from OCR
+ * Menu item extracted from OCR / scraping
  */
 export interface MenuItem {
     name: string;
@@ -129,7 +164,7 @@ export interface MenuResponse {
 }
 
 /**
- * Scraped restaurant data (raw)
+ * Scraped restaurant data (raw from scraper)
  */
 export interface ScrapedRestaurant {
     name: string;
@@ -143,11 +178,10 @@ export interface ScrapedRestaurant {
     menu_items: MenuItem[];
     is_open?: boolean;
     source: WingSource;
-    // Platform-specific IDs for menu fetching
-    store_id?: string;      // DoorDash store ID
-    store_uuid?: string;    // UberEats store UUID
-    restaurant_id?: string; // Grubhub restaurant ID
-    source_url?: string;    // Full URL to restaurant page
+    store_id?: string;
+    store_uuid?: string;
+    restaurant_id?: string;
+    source_url?: string;
 }
 
 /**
@@ -169,20 +203,6 @@ export interface AgentQLResponse {
     data: unknown;
     screenshot?: string;
     error?: string;
-}
-
-/**
- * OCR.space API response
- */
-export interface OCRResponse {
-    ParsedResults: Array<{
-        ParsedText: string;
-        ErrorMessage?: string;
-        FileParseExitCode: number;
-    }>;
-    OCRExitCode: number;
-    IsErroredOnProcessing: boolean;
-    ErrorMessage?: string[];
 }
 
 /**

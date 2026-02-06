@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, Bebas_Neue } from 'next/font/google';
+import { Inter, Bebas_Neue, Permanent_Marker, Russo_One } from 'next/font/google';
 import './globals.css';
 
 const inter = Inter({
@@ -15,24 +15,39 @@ const bebasNeue = Bebas_Neue({
     display: 'swap',
 });
 
+const russoOne = Russo_One({
+    weight: '400',
+    subsets: ['latin'],
+    variable: '--font-russo',
+    display: 'swap',
+});
+
+// "Permanent Marker" handwriting font for coach notes:
+const permanentMarker = Permanent_Marker({
+    weight: '400',
+    subsets: ['latin'],
+    variable: '--font-marker',
+    display: 'swap',
+});
+
 export const metadata: Metadata = {
-    title: 'Wing Scout | Super Bowl LX Chicken Wing Tracker',
-    description: 'Find the best chicken wings near you for Super Bowl LX. Real-time availability, prices, and deals from DoorDash, Uber Eats, Grubhub, and local spots.',
-    keywords: ['chicken wings', 'super bowl', 'wing deals', 'food delivery', 'game day food'],
-    authors: [{ name: 'Wing Scout' }],
+    title: 'Super Bowl LX: Wing Command | Your Game Day Wing HQ',
+    description: 'Your Super Bowl LX wing headquarters. Find the best chicken wings to order for your game day party — real-time deals, flavor matching, and AI-powered scouting. Powered by Coach Wing.',
+    keywords: ['chicken wings', 'super bowl', 'wing deals', 'game day food', 'wing command', 'super bowl lx', 'super bowl party', 'order wings'],
+    authors: [{ name: 'Wing Command' }],
     icons: {
         icon: '/icon.svg',
     },
     openGraph: {
-        title: 'Wing Scout | Super Bowl LX Wing Tracker',
-        description: 'Real-time chicken wing availability for Super Bowl LX',
+        title: 'Super Bowl LX: Wing Command | Your Game Day Wing HQ',
+        description: 'Find the best chicken wings for your Super Bowl LX party. Real-time deals, flavor matching, and AI-powered scouting.',
         type: 'website',
         locale: 'en_US',
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'Wing Scout | Super Bowl LX Wing Tracker',
-        description: 'Real-time chicken wing availability for Super Bowl LX',
+        title: 'Super Bowl LX: Wing Command | Your Game Day Wing HQ',
+        description: 'Find the best chicken wings for your Super Bowl LX party.',
     },
     robots: {
         index: true,
@@ -44,7 +59,7 @@ export const viewport: Viewport = {
     width: 'device-width',
     initialScale: 1,
     maximumScale: 1,
-    themeColor: '#121212',
+    themeColor: '#F3F4F6',
 };
 
 export default function RootLayout({
@@ -53,12 +68,10 @@ export default function RootLayout({
     children: React.ReactNode;
 }) {
     return (
-        <html lang="en" className={`${inter.variable} ${bebasNeue.variable}`}>
-            <body className="bg-gridiron-bg min-h-screen antialiased">
-                <div className="gridiron-bg min-h-screen">
-                    <div className="stadium-glow min-h-screen">
-                        {children}
-                    </div>
+        <html lang="en" className={`${inter.variable} ${bebasNeue.variable} ${russoOne.variable} ${permanentMarker.variable}`}>
+            <body className="min-h-screen antialiased" style={{ background: 'transparent' }}>
+                <div className="min-h-screen">
+                    {children}
                 </div>
             </body>
         </html>

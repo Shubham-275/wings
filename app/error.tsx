@@ -22,7 +22,7 @@ export default function Error({ error, reset }: ErrorProps) {
                     Fumble!
                 </h2>
                 <p className="text-gray-400 mb-6">
-                    Something went wrong while loading Wing Scout.
+                    Something went wrong while loading Wing Command.
                     Don&apos;t worry, we&apos;re on it!
                 </p>
                 {error.digest && (

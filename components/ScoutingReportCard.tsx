@@ -1,0 +1,401 @@
+'use client';
+
+import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Clock, MapPin, Phone, ExternalLink, Truck, ArrowRight, DollarSign } from 'lucide-react';
+import { WingSpot, FlavorPersona } from '@/lib/types';
+import {
+    getStatusColorClass,
+    getStatusEmoji,
+    formatRelativeTime,
+    getGoogleMapsUrl,
+    getOrderSearchUrl,
+    getTelLink,
+    getFlavorPersona,
+    cn,
+} from '@/lib/utils';
+
+// ===========================================
+// Draft Grade Calculator
+// ===========================================
+function calculateDraftGrade(spot: WingSpot): { grade: string; color: string; bgColor: string } {
+    let score = 50; // base
+
+    // Price factor (lower = better)
+    if (spot.price_per_wing !== null) {
+        if (spot.price_per_wing <= 1.0) score += 25;
+        else if (spot.price_per_wing <= 1.5) score += 15;
+        else if (spot.price_per_wing <= 2.0) score += 5;
+        else score -= 10;
+    }
+
+    // Deal bonus
+    if (spot.deal_text) score += 10;
+
+    // Delivery speed
+    if (spot.delivery_time_mins !== null) {
+        if (spot.delivery_time_mins <= 20) score += 10;
+        else if (spot.delivery_time_mins <= 35) score += 5;
+        else score -= 5;
+    }
+
+    // Status
+    if (spot.status === 'green') score += 15;
+    else if (spot.status === 'yellow') score += 5;
+    else score -= 15;
+
+    // Flavor match
+    if (spot.flavor_match) score += Math.floor(spot.flavor_match / 10);
+
+    // Clamp 0-100
+    score = Math.max(0, Math.min(100, score));
+
+    if (score >= 90) return { grade: 'A+', color: '#16A34A', bgColor: 'rgba(22,163,74,0.9)' };
+    if (score >= 80) return { grade: 'A', color: '#22C55E', bgColor: 'rgba(34,197,94,0.9)' };
+    if (score >= 70) return { grade: 'B+', color: '#65A30D', bgColor: 'rgba(101,163,13,0.9)' };
+    if (score >= 60) return { grade: 'B', color: '#EAB308', bgColor: 'rgba(234,179,8,0.9)' };
+    if (score >= 50) return { grade: 'B-', color: '#F97316', bgColor: 'rgba(249,115,22,0.9)' };
+    if (score >= 40) return { grade: 'C+', color: '#F97316', bgColor: 'rgba(249,115,22,0.9)' };
+    if (score >= 30) return { grade: 'C', color: '#EF4444', bgColor: 'rgba(239,68,68,0.9)' };
+    return { grade: 'D', color: '#DC2626', bgColor: 'rgba(220,38,38,0.9)' };
+}
+
+// ===========================================
+// Restaurant type label from name heuristic
+// ===========================================
+function getRestaurantType(spot: WingSpot): string {
+    const name = spot.name.toLowerCase();
+    const chains = ['buffalo wild wings', 'wingstop', 'hooters', 'popeyes', 'kfc', 'raising cane',
+        'zaxby', 'chili\'s', 'applebee', 'bdubs', 'domino', 'pizza hut', 'papa john'];
+    for (const chain of chains) {
+        if (name.includes(chain)) return 'CHAIN PLAY';
+    }
+    if (spot.source === 'google') return 'LOCAL SCOUT';
+    if (spot.deal_text) return 'DEAL ALERT';
+    return 'LOCAL FAVORITE';
+}
+
+// ===========================================
+// Hand-drawn shaky circle SVG path
+// ===========================================
+function ShakyCircleSVG({ width, height }: { width: number; height: number }) {
+    const cx = width / 2;
+    const cy = height / 2;
+    const rx = width / 2 - 6;
+    const ry = height / 2 - 6;
+
+    // Generate a shaky ellipse path
+    const points: string[] = [];
+    const segments = 32;
+    for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * Math.PI * 2;
+        const wobbleX = (Math.random() - 0.5) * 6;
+        const wobbleY = (Math.random() - 0.5) * 6;
+        const x = cx + Math.cos(angle) * rx + wobbleX;
+        const y = cy + Math.sin(angle) * ry + wobbleY;
+        if (i === 0) {
+            points.push(`M ${x} ${y}`);
+        } else {
+            points.push(`L ${x} ${y}`);
+        }
+    }
+    points.push('Z');
+
+    return (
+        <svg
+            width={width}
+            height={height}
+            viewBox={`0 0 ${width} ${height}`}
+            className="absolute inset-0 pointer-events-none z-10"
+            style={{ overflow: 'visible' }}
+        >
+            <path
+                d={points.join(' ')}
+                className="red-circle-annotation animate"
+                strokeWidth={3}
+            />
+        </svg>
+    );
+}
+
+// ===========================================
+// The Scouting Report Card Component
+// ===========================================
+interface ScoutingReportCardProps {
+    spot: WingSpot;
+    index: number;
+    flavor: FlavorPersona | null;
+    isBestDeal: boolean;
+}
+
+export function ScoutingReportCard({ spot, index, flavor, isBestDeal }: ScoutingReportCardProps) {
+    const [isHovered, setIsHovered] = useState(false);
+    const cardRef = useRef<HTMLDivElement>(null);
+
+    const draftGrade = calculateDraftGrade(spot);
+    const restaurantType = getRestaurantType(spot);
+    const flavorMatch = spot.flavor_match ?? 0;
+    const persona = flavor ? getFlavorPersona(flavor) : null;
+    const isSoldOut = spot.status === 'red' && !spot.is_in_stock;
+    const priceStr = spot.price_per_wing !== null ? `$${spot.price_per_wing.toFixed(2)}/WING` : 'MARKET PRICE';
+    const isGoodPrice = spot.price_per_wing !== null && spot.price_per_wing <= 1.5;
+
+    // Distance satirical label
+    const deliveryStr = spot.delivery_time_mins !== null
+        ? `${spot.delivery_time_mins} YARDS AWAY`
+        : 'UNDISCLOSED LOCATION';
+
+    // Polaroid caption
+    const scoutDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
+
+    // Tab color based on type
+    const tabColors: Record<string, string> = {
+        'CHAIN PLAY': '#2563EB',
+        'LOCAL SCOUT': '#16A34A',
+        'DEAL ALERT': '#F97316',
+        'LOCAL FAVORITE': '#7C3AED',
+    };
+
+    return (
+        <motion.div
+            ref={cardRef}
+            className={cn(
+                'report-card group relative',
+                isBestDeal && 'perfect-play-glow',
+            )}
+            initial={{ opacity: 0, y: 40, rotateZ: -1 + Math.random() * 2 }}
+            animate={{ opacity: 1, y: 0, rotateZ: 0 }}
+            transition={{
+                delay: index * 0.08,
+                duration: 0.55,
+                ease: [0.34, 1.56, 0.64, 1],
+            }}
+            onMouseEnter={() => setIsHovered(true)}
+            onMouseLeave={() => setIsHovered(false)}
+        >
+            {/* ===== Folder Tab ===== */}
+            <div
+                className="report-tab"
+                style={{ background: tabColors[restaurantType] || '#7C3AED' }}
+            >
+                <span className="text-[8px] text-white font-heading tracking-widest whitespace-nowrap">
+                    {restaurantType}
+                </span>
+            </div>
+
+            {/* ===== Draft Grade — top right corner ===== */}
+            <motion.div
+                className="draft-grade absolute -top-3 -right-3 z-10"
+                style={{ background: draftGrade.bgColor }}
+                initial={{ scale: 0, rotate: -15 }}
+                animate={{ scale: 1, rotate: 6 }}
+                transition={{ delay: index * 0.08 + 0.3, type: 'spring', stiffness: 400 }}
+            >
+                {draftGrade.grade}
+            </motion.div>
+
+            {/* ===== Card Inner Content ===== */}
+            <div className="p-4 pt-5 space-y-3">
+                {/* Row: Polaroid + Restaurant Info */}
+                <div className="flex gap-3">
+                    {/* Polaroid Image */}
+                    <div className="shrink-0">
+                        <div className="polaroid w-[90px] md:w-[100px]">
+                            <div className="relative w-full aspect-square overflow-hidden bg-gray-100">
+                                {spot.image_url ? (
+                                    <img
+                                        src={spot.image_url}
+                                        alt={spot.name}
+                                        className="w-full h-full object-cover"
+                                        loading="lazy"
+                                    />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-amber-50 to-amber-100">
+                                        <span className="text-3xl opacity-40">🍗</span>
+                                    </div>
+                                )}
+
+                                {/* Status badge on Polaroid */}
+                                <div className={cn(
+                                    'absolute bottom-1 left-1 px-1.5 py-0.5 rounded text-[7px] font-bold tracking-wider',
+                                    getStatusColorClass(spot.status),
+                                    'border border-current/10'
+                                )}>
+                                    {getStatusEmoji(spot.status)}
+                                </div>
+                            </div>
+                            {/* Polaroid caption */}
+                            <p className="font-marker text-[8px] text-gray-400 text-center mt-1 leading-tight">
+                                SCOUTED: {scoutDate}
+                            </p>
+                        </div>
+                    </div>
+
+                    {/* Name + Quick Stats */}
+                    <div className="flex-1 min-w-0 pt-1">
+                        <h3 className="font-heading text-sm md:text-base tracking-wider text-gray-800 leading-tight truncate">
+                            {spot.name.toUpperCase()}
+                        </h3>
+
+                        {/* Flavor match badge */}
+                        {persona && flavorMatch > 0 && (
+                            <div
+                                className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded text-[9px] font-bold tracking-wider"
+                                style={{
+                                    background: `${persona.color}12`,
+                                    color: persona.color,
+                                    border: `1px solid ${persona.color}25`,
+                                }}
+                            >
+                                {persona.emoji} {flavorMatch}% MATCH
+                            </div>
+                        )}
+
+                        {/* Deal highlight */}
+                        {spot.deal_text && (
+                            <motion.div
+                                className="flex items-center gap-1 mt-1.5"
+                                initial={{ opacity: 0, x: -8 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: index * 0.08 + 0.2 }}
+                            >
+                                <span className="text-[10px] font-marker text-stadium-green leading-tight">
+                                    🏷️ {spot.deal_text}
+                                </span>
+                            </motion.div>
+                        )}
+                    </div>
+                </div>
+
+                {/* ===== Satirical Stat Lines ===== */}
+                <div className="space-y-2 pt-1 border-t border-dashed border-amber-300/40">
+                    {/* Salary Cap Hit (Price) */}
+                    <div className="relative flex items-center justify-between">
+                        <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1">
+                            <DollarSign className="w-3 h-3" /> SALARY CAP HIT
+                        </span>
+                        <span className={cn(
+                            'font-marker text-sm font-bold',
+                            isGoodPrice ? 'text-stadium-green' : 'text-red-600'
+                        )}>
+                            {priceStr}
+                        </span>
+
+                        {/* Red circle annotation on hover — highlights the price */}
+                        <AnimatePresence>
+                            {isHovered && isGoodPrice && (
+                                <motion.div
+                                    className="absolute -right-2 -top-1 pointer-events-none"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                >
+                                    <ShakyCircleSVG width={110} height={30} />
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+
+                    {/* Endzone Distance (Delivery) */}
+                    <div className="flex items-center justify-between">
+                        <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> ENDZONE DISTANCE
+                        </span>
+                        <span className="font-marker text-[11px] text-gray-700 flex items-center gap-1">
+                            {deliveryStr} <ArrowRight className="w-3 h-3" />
+                        </span>
+                    </div>
+
+                    {/* Location */}
+                    <div className="flex items-center justify-between">
+                        <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1">
+                            <MapPin className="w-3 h-3" /> FIELD POSITION
+                        </span>
+                        <span className="text-[9px] text-gray-400 truncate max-w-[50%] text-right">
+                            {spot.address || 'TBD'}
+                        </span>
+                    </div>
+                </div>
+
+                {/* ===== Footer — Source + Actions ===== */}
+                <div className="flex items-center justify-between pt-2 border-t border-dashed border-amber-300/40">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[8px] text-gray-400 uppercase tracking-widest font-heading">
+                            {spot.source.toUpperCase()}
+                        </span>
+                        <span className="text-[8px] text-gray-300">
+                            {formatRelativeTime(spot.last_updated)}
+                        </span>
+                    </div>
+
+                    <div className="flex items-center gap-0.5">
+                        {spot.phone && (
+                            <a
+                                href={getTelLink(spot.phone)}
+                                className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"
+                                title="Call"
+                            >
+                                <Phone className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
+                            </a>
+                        )}
+                        <a
+                            href={getGoogleMapsUrl(spot.address)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"
+                            title="Directions"
+                        >
+                            <Truck className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
+                        </a>
+                        <a
+                            href={getOrderSearchUrl(spot.name, spot.address)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"
+                            title="Order Online"
+                        >
+                            <ExternalLink className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            {/* ===== "FUMBLE!" Overlay for Sold Out ===== */}
+            <AnimatePresence>
+                {isSoldOut && (
+                    <motion.div
+                        className="fumble-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                    >
+                        <svg width="80" height="80" viewBox="0 0 80 80" className="opacity-60">
+                            <line x1="10" y1="10" x2="70" y2="70" stroke="#DC2626" strokeWidth="6" strokeLinecap="round" />
+                            <line x1="70" y1="10" x2="10" y2="70" stroke="#DC2626" strokeWidth="6" strokeLinecap="round" />
+                        </svg>
+                        <span className="font-marker text-red-500/80 text-xl mt-1 transform rotate-[-8deg]">
+                            FUMBLE!
+                        </span>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* ===== "PERFECT PLAY!" badge for Best Deal ===== */}
+            <AnimatePresence>
+                {isBestDeal && (
+                    <motion.div
+                        className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-20
+                                   bg-stadium-green text-white px-3 py-1 rounded-lg shadow-lg"
+                        initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        transition={{ delay: index * 0.08 + 0.5, type: 'spring' }}
+                    >
+                        <span className="font-marker text-[10px] tracking-wider whitespace-nowrap">
+                            ⭐ PERFECT PLAY!
+                        </span>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
+    );
+}

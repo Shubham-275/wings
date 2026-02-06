@@ -1,342 +1,230 @@
-# 🍗 Wing Scout - Super Bowl LX Chicken Wing Tracker
+# Wing Scout - Super Bowl LX War Room
 
-**Hyper-local, real-time chicken wing availability for Super Bowl LX (Feb 8, 2026, 6:30 PM ET)**
+**Flavor-first, mesmerizing, hyper-local chicken wing tracker for Super Bowl LX (Feb 8, 2026).**
 
-Find the best wings near you with live pricing, stock status, delivery times, and Super Bowl specials — all on a "Gridiron War Room" themed interactive map.
+A "War Room" interface that scouts the best chicken wings near you in real-time using AI-powered parallel scraping from DoorDash, Uber Eats, Grubhub, and Google.
 
-![Wing Scout Banner](./public/banner.png)
+## Visual Identity
 
-## 🏈 Features
+- **Theme:** "Midnight Turf" - Dark #050505 background with subtle grass texture grid
+- **Accents:** Neon Green (#39FF14) glows, stadium lighting effects
+- **Typography:** Bebas Neue (scoreboard style) + Inter (body)
+- **Cards:** Glassmorphism "Scout Cards" with backdrop blur
+- **Animations:** Framer Motion parallax, floating particles, "tackle-in" card entrances
 
-- **Pan-USA Coverage**: Works with any valid US zip code
-- **Real-Time Data**: Scrapes DoorDash, Uber Eats, Grubhub, and Yelp
-- **Smart Pin Colors**:
-  - 🟢 **Green**: In stock + deal/≤$1.50 per wing + <45 min delivery + open during game
-  - 🟡 **Yellow**: Wings available but doesn't meet green criteria
-  - 🔴 **Red**: Sold out, closed, or no wings found
-- **Live Countdown**: Timer to Super Bowl LX kickoff
-- **Gridiron Theme**: Dark stadium aesthetic with animated UI
-- **Mobile-First**: Responsive bottom sheets and smooth animations
+## Architecture
 
-## 🛠️ Tech Stack
+```
+Frontend (Next.js 14 App Router)
+  |-- page.tsx           -> War Room hero + flavor selector + results grid
+  |-- HeroVisuals.tsx    -> Parallax field lines + floating wing/confetti particles
+  |-- FlavorSelector.tsx -> 3 flavor personas with pulsing selection
+  |-- ZipSearch.tsx      -> Stadium-light illuminated zip input
+  |-- WingGrid.tsx       -> Glassmorphism Scout Cards grid
 
-| Component | Technology |
-|-----------|------------|
-| Framework | Next.js 14+ (App Router) |
-| Language | TypeScript |
-| Styling | Tailwind CSS |
-| Database | Supabase (PostgreSQL + PostGIS) |
-| Mapping | Mapbox GL JS |
-| Scraping | Mino/AgentQL Enterprise |
-| OCR | OCR.space API |
-| Caching | Upstash Redis |
-| Deployment | Vercel + GitHub Actions |
+Backend (API Route)
+  |-- /api/scout         -> Main endpoint (zip + flavor)
+  |-- lib/agentql.ts     -> Mino Enterprise parallel scraping engine
+  |-- lib/geocode.ts     -> Nominatim (OpenStreetMap) geocoding
+  |-- lib/cache.ts       -> Upstash Redis caching layer
 
----
-
-## 📋 Prerequisites
-
-- Node.js 18+ and npm
-- Python 3.9+ (for cron scraper)
-- Supabase account (free tier)
-- Mapbox account (free tier)
-- Upstash Redis account (free tier)
-- Mino/AgentQL Enterprise API key
-- OCR.space API key
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone & Install
-
-```bash
-git clone <your-repo-url>
-cd wing-scout
-npm install
+Data
+  |-- Supabase (PostgreSQL + PostGIS)
+  |-- Upstash Redis (15-min TTL cache)
 ```
 
-### 2. Setup Supabase
+## Flavor Personas
 
-1. Create a new project at [supabase.com](https://supabase.com)
-2. Enable PostGIS extension:
-   - Go to **Database** → **Extensions**
-   - Search for `postgis` and enable it
-3. Run the database schema:
+Users pick a team/flavor before searching:
 
-```sql
--- Enable PostGIS
-CREATE EXTENSION IF NOT EXISTS postgis;
+| Persona | Keywords | Emoji |
+|---------|----------|-------|
+| **The Face-Melter** | Habanero, Ghost Pepper, Carolina Reaper, Atomic | 🔥 |
+| **The Classicist** | Buffalo, Hot, Mild, Traditional, Cayenne | 🦬 |
+| **The Sticky Finger** | Honey BBQ, Garlic Parm, Teriyaki, Korean | 🍯 |
 
--- Wing spots table
-CREATE TABLE wing_spots (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  address TEXT NOT NULL,
-  location GEOGRAPHY(POINT, 4326),
-  lat DOUBLE PRECISION,
-  lng DOUBLE PRECISION,
-  price_per_wing DECIMAL(10,2),
-  deal_text TEXT,
-  delivery_time_mins INTEGER,
-  wait_time_mins INTEGER,
-  is_in_stock BOOLEAN DEFAULT true,
-  is_open_now BOOLEAN DEFAULT true,
-  opens_during_game BOOLEAN DEFAULT true,
-  hours_today TEXT,
-  phone TEXT,
-  image_url TEXT,
-  source TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('green', 'yellow', 'red')),
-  zip_code TEXT NOT NULL,
-  last_updated TIMESTAMPTZ DEFAULT NOW(),
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+Spots are scored 0-100 against the selected persona.
 
--- Geocode cache table
-CREATE TABLE geocode_cache (
-  zip_code TEXT PRIMARY KEY,
-  city TEXT,
-  state TEXT,
-  lat DOUBLE PRECISION,
-  lng DOUBLE PRECISION,
-  cached_at TIMESTAMPTZ DEFAULT NOW()
-);
+## Scraping Flow
 
--- Scrape queue table
-CREATE TABLE scrape_queue (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  zip_code TEXT NOT NULL,
-  status TEXT DEFAULT 'pending',
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  started_at TIMESTAMPTZ,
-  completed_at TIMESTAMPTZ
-);
+1. User enters ZIP + selects Flavor Persona
+2. **Geocode** via Nominatim (free, no API key)
+3. **Parallel scrape** (`Promise.allSettled`):
+   - DoorDash search results
+   - Uber Eats search results
+   - Grubhub search results
+   - Google search (hidden gem detection)
+4. **Deduplicate** by normalized name + address
+5. **Score** against flavor persona keywords
+6. **Cache** in Redis (15-min TTL) + persist to Supabase
 
--- Indexes for performance
-CREATE INDEX idx_wing_spots_zip ON wing_spots(zip_code);
-CREATE INDEX idx_wing_spots_location ON wing_spots USING GIST(location);
-CREATE INDEX idx_wing_spots_status ON wing_spots(status);
-CREATE INDEX idx_wing_spots_last_updated ON wing_spots(last_updated);
-CREATE INDEX idx_scrape_queue_status ON scrape_queue(status);
-```
+## Setup
 
-4. Copy your project URL and keys from **Settings** → **API**
+### Prerequisites
 
-### 3. Setup Mapbox
+- Node.js >= 18
+- Supabase project (free tier works)
+- Mino/AgentQL API key
+- Upstash Redis (optional but recommended)
 
-1. Create account at [mapbox.com](https://www.mapbox.com)
-2. Create a new access token with `styles:read` and `styles:tiles` scopes
-3. Copy your public token
+### Environment Variables
 
-### 4. Setup Upstash Redis
-
-1. Create account at [upstash.com](https://upstash.com)
-2. Create a new Redis database (free tier)
-3. Copy the REST URL and REST token
-
-### 5. Get API Keys
-
-- **Mino/AgentQL**: Get your enterprise API key
-- **OCR.space**: Get free API key at [ocr.space](https://ocr.space/ocrapi)
-
-### 6. Configure Environment
-
-```bash
-cp .env.example .env.local
-```
-
-Edit `.env.local` with your values:
+Create `.env.local`:
 
 ```env
-# Supabase
+# Required - Server
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+AGENTQL_API_KEY=your_mino_api_key
+
+# Required - Client
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 
-# Mapbox
-NEXT_PUBLIC_MAPBOX_TOKEN=pk.your-mapbox-token
-
-# Mino/AgentQL Enterprise
-AGENTQL_API_KEY=your-agentql-key
-AGENTQL_API_URL=https://api.agentql.com
-
-# OCR.space
-OCR_SPACE_API_KEY=your-ocr-space-key
-
-# Upstash Redis
+# Optional - Caching (highly recommended)
 UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
-UPSTASH_REDIS_REST_TOKEN=your-redis-token
+UPSTASH_REDIS_REST_TOKEN=your_redis_token
+
+# Optional - Custom Mino endpoint
+AGENTQL_API_URL=https://mino.ai/v1/automation/run-sse
 ```
 
-### 7. Run Development Server
+### Database Setup
+
+Run the schema in your Supabase SQL editor:
 
 ```bash
+# The schema file is at:
+supabase/schema.sql
+```
+
+This creates:
+- `wing_spots` table with `flavor_tags` (TEXT[]), `menu_json` (JSONB), and PostGIS spatial indexing
+- `geocode_cache` table (permanent zip-to-lat/lng mapping)
+- `scrape_queue` table (for background cron jobs)
+- `menus` table (cached restaurant menus)
+- PostGIS trigger for auto-computing `location` from `lat`/`lng`
+- Row Level Security policies
+
+### Install & Run
+
+```bash
+npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open http://localhost:3000
 
----
+## Render.com Deployment (Migration from Vercel)
 
-## 📦 Production Deployment
+### Why Render?
 
-### Deploy to Vercel
+Vercel serverless functions have a **60-second timeout** (300s on Hobby with Fluid Compute). Parallel scraping across 4 platforms can exceed this. Render Web Services have **no timeout limit**.
 
-1. Push your code to GitHub
-2. Import project at [vercel.com](https://vercel.com)
-3. Add all environment variables in Vercel dashboard
-4. Deploy!
+### Render Setup
 
-```bash
-# Or use Vercel CLI
-npm i -g vercel
-vercel --prod
+1. **Create a Web Service** on Render
+   - Connect your GitHub repository
+   - **Build Command:** `npm install && npm run build`
+   - **Start Command:** `npm start`
+   - **Environment:** Node
+   - **Plan:** Starter ($7/mo) or Free (with limitations)
+
+2. **Environment Variables**
+   - Add all env vars from the `.env.local` section above
+   - Set `NODE_ENV=production`
+
+3. **Render Config (`render.yaml`)**
+
+```yaml
+services:
+  - type: web
+    name: wing-scout
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: AGENTQL_API_KEY
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
 ```
 
-### Setup GitHub Actions Cron
+4. **Next.js Standalone Output**
+   - `next.config.mjs` includes `output: 'standalone'` which is required for Render deployment
 
-The Python scraper runs every 4 hours to pre-populate data for the top 150 zip codes.
+### Cron Job (Optional)
 
-1. Add these secrets to your GitHub repository:
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
-   - `AGENTQL_API_KEY`
-   - `AGENTQL_API_URL`
+Set up a Render Cron Job to pre-populate the database:
 
-2. The workflow at `.github/workflows/scrape-cron.yml` will run automatically.
+- **Schedule:** `0 */4 * * *` (every 4 hours)
+- **Command:** `python scraper/scrape_wings.py`
+- This pre-scrapes 150+ major US zip codes
 
----
-
-## 🌱 Sample Data Seeding
-
-Run this SQL to add sample wing spots for testing:
-
-```sql
-INSERT INTO wing_spots (name, address, lat, lng, price_per_wing, deal_text, delivery_time_mins, is_in_stock, is_open_now, opens_during_game, hours_today, phone, source, status, zip_code)
-VALUES 
-  ('Buffalo Wild Wings', '123 Main St, New York, NY 10001', 40.7484, -73.9967, 1.20, '50 Wings Super Bowl Bucket - $49.99!', 35, true, true, true, '11AM - 2AM', '(212) 555-0101', 'doordash', 'green', '10001'),
-  ('Wingstop', '456 Broadway, New York, NY 10001', 40.7505, -73.9934, 1.45, 'Game Day Special: Buy 20 Get 10 Free', 25, true, true, true, '10AM - 12AM', '(212) 555-0102', 'doordash', 'green', '10001'),
-  ('Wing Zone', '789 5th Ave, New York, NY 10001', 40.7527, -73.9812, 1.65, NULL, 50, true, true, true, '11AM - 11PM', '(212) 555-0103', 'ubereats', 'yellow', '10001'),
-  ('Hooters', '321 Park Ave, New York, NY 10001', 40.7549, -73.9756, 1.80, NULL, 40, false, true, true, '11AM - 1AM', '(212) 555-0104', 'grubhub', 'red', '10001'),
-  ('Atomic Wings', '654 Lexington Ave, New York, NY 10001', 40.7571, -73.9689, 1.35, 'Super Bowl Party Pack - $59.99', 30, true, true, true, '11AM - 3AM', '(212) 555-0105', 'doordash', 'green', '10001');
-
--- Update location geography
-UPDATE wing_spots SET location = ST_SetSRID(ST_MakePoint(lng, lat), 4326)::geography WHERE location IS NULL;
-```
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
-/wing-scout
-├── /app
-│   ├── layout.tsx              # Root layout with theme
-│   ├── page.tsx                # Main search + map page
-│   ├── globals.css             # Global styles
-│   └── api/scrape/route.ts     # On-demand scraping endpoint
-├── /components
-│   ├── Scoreboard.tsx          # Countdown + availability %
-│   ├── ZipSearch.tsx           # Zip input with autocomplete
-│   ├── WingMap.tsx             # Mapbox map component
-│   ├── WingCard.tsx            # Restaurant detail card
-│   └── ui/                     # Reusable UI components
-├── /lib
-│   ├── supabase.ts             # Supabase clients
-│   ├── agentql.ts              # Scraper wrappers
-│   ├── ocr.ts                  # OCR.space wrapper
+wing-scout/
+├── app/
+│   ├── layout.tsx              # Root layout (Bebas Neue + Inter fonts)
+│   ├── page.tsx                # War Room main page
+│   ├── globals.css             # Midnight Turf theme styles
+│   ├── loading.tsx             # Loading state
+│   ├── error.tsx               # Error boundary
+│   └── api/
+│       ├── scout/route.ts      # GET /api/scout?zip=xxxxx&flavor=classicist
+│       └── menu/route.ts       # GET /api/menu?spot_id=xxxxx
+├── components/
+│   ├── HeroVisuals.tsx         # Parallax + floating particles (Framer Motion)
+│   ├── FlavorSelector.tsx      # 3 flavor persona cards with pulse animation
+│   ├── ZipSearch.tsx           # Stadium-lit glowing zip input
+│   ├── WingGrid.tsx            # Scout Cards grid (glassmorphism)
+│   └── ui/                     # Reusable UI primitives
+├── lib/
+│   ├── agentql.ts              # Mino/AgentQL scraper (parallel, flavor-aware)
+│   ├── types.ts                # TypeScript definitions
+│   ├── utils.ts                # Flavor scoring, dedup, formatting
+│   ├── supabase.ts             # Database client
+│   ├── cache.ts                # Upstash Redis caching
 │   ├── geocode.ts              # Nominatim geocoding
-│   ├── cache.ts                # Upstash Redis
-│   ├── utils.ts                # Helpers
-│   └── types.ts                # TypeScript interfaces
-├── /scraper
-│   ├── scrape_wings.py         # Python cron script
-│   └── requirements.txt        # Python dependencies
-├── /public                     # Static assets
-├── .env.example
-├── next.config.mjs
-├── tailwind.config.ts
-├── tsconfig.json
-├── package.json
-└── README.md
+│   ├── env.ts                  # Environment validation
+│   └── menu.ts                 # Menu fetching
+├── supabase/
+│   └── schema.sql              # Full database schema
+├── scraper/
+│   └── scrape_wings.py         # Python cron pre-scraper
+├── tailwind.config.ts          # Midnight Turf theme
+├── next.config.mjs             # Standalone output for Render
+└── package.json                # framer-motion, lucide-react, etc.
 ```
 
----
+## Constraint Checklist
 
-## 🔧 API Endpoints
+| Constraint | Status |
+|-----------|--------|
+| Google Places API used? | NO (OSM/Nominatim) |
+| Yelp API used? | NO |
+| Vercel deployment? | NO (Render.com) |
+| UI "Mesmerizing"? | YES (Framer Motion, glassmorphism, neon glow) |
+| Menu scraping parallel? | YES (`Promise.allSettled` across 4 sources) |
+| Flavor persona filtering? | YES (keyword matching, 0-100 scoring) |
 
-### `GET /api/scrape?zip=10001`
+## Tech Stack
 
-Triggers on-demand scraping for a zip code.
-
-**Response:**
-```json
-{
-  "success": true,
-  "spots": [...],
-  "cached": false,
-  "message": "Found 12 wing spots"
-}
-```
-
----
-
-## 🎨 Theme Colors
-
-| Name | Hex | Usage |
-|------|-----|-------|
-| Background | `#121212` | Main dark background |
-| Green | `#22c55e` | In-stock/available |
-| Yellow | `#fbbf24` | Partial availability |
-| Red | `#ef4444` | Sold out/closed |
-| Text | `#f3f4f6` | Primary text |
-| Muted | `#9ca3af` | Secondary text |
-
----
-
-## 📱 Mobile Support
-
-The app is fully responsive with:
-- Bottom sheet for restaurant details on mobile
-- Touch-friendly map controls
-- Optimized for iOS Safari and Chrome Android
-
----
-
-## 🐛 Troubleshooting
-
-### Map not loading
-- Verify your Mapbox token is correct
-- Check browser console for CORS errors
-- Ensure token has proper scopes
-
-### No data showing
-- Check Supabase connection
-- Verify database tables exist
-- Run sample data seeding SQL
-
-### Scraping failures
-- Verify AgentQL API key
-- Check rate limits
-- Review scraper logs in Vercel
-
----
-
-## 📄 License
-
-MIT License - feel free to use for your Super Bowl party! 🏈🍗
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-**Built with 🍗 for Super Bowl LX**
+- **Framework:** Next.js 14 (App Router), TypeScript, Tailwind CSS
+- **Animations:** Framer Motion
+- **Icons:** Lucide React
+- **Database:** Supabase (PostgreSQL + PostGIS)
+- **Cache:** Upstash Redis
+- **Scraper:** Mino Enterprise (AgentQL)
+- **Geocoding:** Nominatim (OpenStreetMap)
+- **Deployment:** Render.com (Web Service)

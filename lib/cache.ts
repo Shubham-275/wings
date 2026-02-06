@@ -18,8 +18,8 @@ const redis = redisUrl && redisToken
     ? new Redis({ url: redisUrl, token: redisToken })
     : null;
 
-// Cache TTL in seconds (15 minutes default)
-const DEFAULT_TTL = 15 * 60;
+// Cache TTL in seconds (2 hours — discovery app, restaurant data doesn't change fast)
+const DEFAULT_TTL = 2 * 60 * 60;
 const GEOCODE_TTL = 60 * 60 * 24 * 365; // 1 year for geocode (permanent)
 
 /**

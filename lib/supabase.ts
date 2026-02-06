@@ -166,7 +166,7 @@ export async function getPendingScrapeCount(
 /**
  * Check if data is stale
  */
-export function isDataStale(lastUpdated: string, maxAgeMinutes: number = 15): boolean {
+export function isDataStale(lastUpdated: string, maxAgeMinutes: number = 60): boolean {
     const updated = new Date(lastUpdated);
     const now = new Date();
     const diffMs = now.getTime() - updated.getTime();

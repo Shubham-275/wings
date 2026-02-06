@@ -1,234 +1,302 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { persistQueryClient } from '@tanstack/react-query-persist-client';
-import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister';
-import { Scoreboard } from '@/components/Scoreboard';
-import { ZipSearch } from '@/components/ZipSearch';
-import { WingMap } from '@/components/WingMap';
-import { WingCard } from '@/components/WingCard';
-import { Sheet } from '@/components/ui/Sheet';
-import { WingSpot, MapViewport, ScrapeResponse, AvailabilityStats } from '@/lib/types';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Trophy, Users } from 'lucide-react';
+import { GlassBlitzEntrance } from '@/components/GlassBlitzEntrance';
+import { CommandJumbotron } from '@/components/CommandJumbotron';
+import { CoachHero } from '@/components/CoachHero';
+import { TrashTalkTicker } from '@/components/TrashTalkTicker';
+import { TradingCardGrid } from '@/components/TradingCardGrid';
+import { FlavorPersona, ScoutResponse, AvailabilityStats } from '@/lib/types';
 import { calculateAvailability } from '@/lib/utils';
 
-// Session storage key for persisting last searched zip
-const LAST_ZIP_KEY = 'wing-scout-last-zip';
-const LAST_SEARCH_TIME_KEY = 'wing-scout-last-search-time';
-const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+const LAST_ZIP_KEY = 'wing-command-last-zip';
+const LAST_FLAVOR_KEY = 'wing-command-last-flavor';
+const CACHE_DURATION_MS = 30 * 60 * 1000; // 30 min — discovery app, not inventory tracking
 
-// Create query client with longer cache time
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
             staleTime: CACHE_DURATION_MS,
-            gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
-            retry: 2,
-            refetchOnWindowFocus: false, // Don't refetch when window regains focus
-            refetchOnMount: false, // Don't refetch when component mounts if data exists
+            gcTime: 60 * 60 * 1000, // 1 hour — keep query data in memory longer
+            retry: 1,
+            refetchOnWindowFocus: false,
+            refetchOnMount: false,
         },
     },
 });
 
-// Flag to track if persister has been set up
-let persisterInitialized = false;
+// ===========================================
+// Stats Bar — bright theme
+// ===========================================
+function StatsBar({ stats, locationName }: { stats: AvailabilityStats; locationName: string }) {
+    if (stats.total === 0) return null;
 
-function HomeContent() {
-    // Initialize zip code as empty to avoid hydration mismatch
-    // sessionStorage will be read in useEffect after hydration
-    const [zipCode, setZipCode] = useState<string>('');
+    return (
+        <div className="rounded-2xl px-5 py-3" style={{
+            background: 'rgba(255,255,255,0.85)',
+            backdropFilter: 'blur(12px)',
+            border: '1px solid rgba(22,163,74,0.15)',
+            boxShadow: '0 2px 12px rgba(0,0,0,0.06)',
+        }}>
+            <motion.div
+                className="flex flex-wrap items-center justify-center gap-4 md:gap-8 text-xs md:text-sm"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+            >
+                {locationName && (
+                    <div className="flex items-center gap-2">
+                        <Trophy className="w-4 h-4 text-whistle-orange" />
+                        <span className="text-whistle-orange font-heading tracking-wider">{locationName.toUpperCase()}</span>
+                    </div>
+                )}
+
+                <div className="h-4 w-px bg-gray-200 hidden md:block" />
+
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-wing-green" />
+                    <span className="text-wing-green-dark font-heading tracking-wider">{stats.green}</span>
+                    <span className="text-gray-500">OPEN</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-wing-yellow" />
+                    <span className="text-wing-yellow-dark font-heading tracking-wider">{stats.yellow}</span>
+                    <span className="text-gray-500">LIMITED</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-wing-red" />
+                    <span className="text-wing-red-dark font-heading tracking-wider">{stats.red}</span>
+                    <span className="text-gray-500">CLOSED</span>
+                </div>
+
+                <div className="h-4 w-px bg-gray-200 hidden md:block" />
+
+                <div className="flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-gray-400" />
+                    <span className="text-gray-700 font-heading tracking-wider">{stats.total} TOTAL</span>
+                </div>
+            </motion.div>
+        </div>
+    );
+}
+
+// ===========================================
+// Coach Wing speech bubbles — sunny comedy twist
+// ===========================================
+function getCoachSpeech(flavor: FlavorPersona | null, isSearching: boolean, hasResults: boolean): string | undefined {
+    if (flavor === 'face-melter') {
+        if (isSearching) return "Scouting the hottest spots... this sunshine ain't helping! \uD83D\uDD25";
+        if (hasResults) return "Now THAT'S a roster! Pick your starter.";
+        return "You chose violence. On a sunny day. Bold.";
+    }
+    if (flavor === 'classicist') {
+        if (isSearching) return "Finding the OGs... perfect game day weather for it.";
+        if (hasResults) return "Now THAT'S a roster! Pick your starter.";
+        return "Smart play. The classics never miss.";
+    }
+    if (flavor === 'sticky-finger') {
+        if (isSearching) return "Tracking down the sauciest spots... \uD83E\uDD24";
+        if (hasResults) return "Now THAT'S a roster! Pick your starter.";
+        return "Napkins? Where we're going, we don't need napkins.";
+    }
+    if (!flavor) return "Pick a play, rookie. What's your flavour?";
+    return undefined;
+}
+
+// ===========================================
+// Main Wing Command Content
+// ===========================================
+function WingCommandContent() {
+    const [zipCode, setZipCode] = useState('');
+    const [flavor, setFlavor] = useState<FlavorPersona | null>(null);
     const [isHydrated, setIsHydrated] = useState(false);
-
-    // Set up persister and restore state after hydration (client-side only)
+    const [bannerDone, setBannerDone] = useState(false);
     useEffect(() => {
-        // Set up query persister once
-        if (!persisterInitialized && typeof window !== 'undefined') {
-            const persister = createSyncStoragePersister({
-                storage: window.sessionStorage,
-                key: 'wing-scout-query-cache',
-            });
-
-            persistQueryClient({
-                queryClient,
-                persister,
-                maxAge: CACHE_DURATION_MS,
-            });
-            persisterInitialized = true;
-        }
-
-        // Restore last searched zip from sessionStorage
         const savedZip = sessionStorage.getItem(LAST_ZIP_KEY);
-        if (savedZip && savedZip.length === 5) {
-            setZipCode(savedZip);
-        }
+        const savedFlavor = sessionStorage.getItem(LAST_FLAVOR_KEY) as FlavorPersona | null;
+        if (savedZip && savedZip.length === 5) setZipCode(savedZip);
+        if (savedFlavor) setFlavor(savedFlavor);
         setIsHydrated(true);
     }, []);
-    const [selectedSpot, setSelectedSpot] = useState<WingSpot | null>(null);
-    const [viewport, setViewport] = useState<MapViewport>({
-        latitude: 39.8283,
-        longitude: -98.5795,
-        zoom: 4,
-    });
 
-    // Track in-flight requests to prevent duplicates
-    const pendingRequestRef = useRef<AbortController | null>(null);
-
-    // Fetch wing spots with deduplication
-    const { data, isLoading, isFetching, refetch } = useQuery<ScrapeResponse>({
-        queryKey: ['wingSpots', zipCode],
+    const { data, isLoading, isFetching } = useQuery<ScoutResponse>({
+        queryKey: ['scout', zipCode, flavor],
         queryFn: async ({ signal }) => {
-            if (!zipCode) return { success: true, spots: [], cached: false, message: '' };
+            if (!zipCode || !flavor) return { success: true, spots: [], cached: false, message: '' };
 
-            // Check if we have fresh data from a recent search
-            const lastSearchTime = sessionStorage.getItem(LAST_SEARCH_TIME_KEY);
-            const cachedData = queryClient.getQueryData<ScrapeResponse>(['wingSpots', zipCode]);
-
-            if (lastSearchTime && cachedData?.success && cachedData.spots.length > 0) {
-                const timeSinceLastSearch = Date.now() - parseInt(lastSearchTime, 10);
-                if (timeSinceLastSearch < CACHE_DURATION_MS) {
-                    console.log(`Using cached data for ${zipCode} (${Math.round(timeSinceLastSearch / 1000)}s old)`);
-                    return cachedData;
-                }
-            }
-
-            // Cancel any pending request for different zip
-            if (pendingRequestRef.current) {
-                pendingRequestRef.current.abort();
-            }
-
-            // Create new abort controller for this request
-            const abortController = new AbortController();
-            pendingRequestRef.current = abortController;
-
-            // Use URLSearchParams for safe URL encoding
-            const params = new URLSearchParams({ zip: zipCode });
-            const res = await fetch(`/api/scrape?${params.toString()}`, {
-                signal: signal || abortController.signal,
+            // Only abort if the user changed zip/flavor (new queryKey = new signal)
+            // Don't use our own abort — let React Query's signal handle cancellation
+            const params = new URLSearchParams({ zip: zipCode, flavor });
+            const res = await fetch(`/api/scout?${params.toString()}`, {
+                signal,
             });
-
-            pendingRequestRef.current = null;
 
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({}));
                 throw new Error(errorData.message || `HTTP ${res.status}`);
             }
 
-            const result = await res.json();
-
-            // Store search time for cache validation
-            sessionStorage.setItem(LAST_SEARCH_TIME_KEY, Date.now().toString());
-
-            return result;
+            return res.json();
         },
-        enabled: zipCode.length === 5,
+        enabled: zipCode.length === 5 && flavor !== null,
+        retry: 2,
+        retryDelay: 3000,
         refetchInterval: CACHE_DURATION_MS,
-        refetchIntervalInBackground: false, // Don't refetch when tab is in background
+        refetchIntervalInBackground: false,
+        // Scraping can take up to 3 mins — don't kill stale queries early
+        staleTime: CACHE_DURATION_MS,
     });
 
     const spots = data?.spots || [];
-    const stats: AvailabilityStats = calculateAvailability(spots);
-
-    // Update viewport when location changes
-    useEffect(() => {
-        if (data?.location) {
-            setViewport({
-                latitude: data.location.lat,
-                longitude: data.location.lng,
-                zoom: 12,
-            });
-        }
-    }, [data?.location]);
+    const stats = calculateAvailability(spots);
+    const locationName = data?.location ? `${data.location.city}, ${data.location.state}` : '';
+    const hasResults = spots.length > 0;
+    const isSearching = isLoading || isFetching;
 
     const handleSearch = useCallback((zip: string) => {
-        // Persist zip to sessionStorage so it survives page refresh
-        if (typeof window !== 'undefined') {
-            sessionStorage.setItem(LAST_ZIP_KEY, zip);
-        }
+        sessionStorage.setItem(LAST_ZIP_KEY, zip);
         setZipCode(zip);
-        setSelectedSpot(null);
     }, []);
 
-    const handleSpotClick = useCallback((spot: WingSpot) => {
-        setSelectedSpot(spot);
+    const handleFlavorSelect = useCallback((f: FlavorPersona) => {
+        sessionStorage.setItem(LAST_FLAVOR_KEY, f);
+        setFlavor(f);
     }, []);
+
+    const coachSpeech = getCoachSpeech(flavor, isSearching, hasResults);
 
     return (
-        <div className="min-h-screen flex flex-col">
-            {/* Scoreboard Header */}
-            <Scoreboard
-                stats={stats}
-                isLoading={isLoading}
-                isRefreshing={isFetching && !isLoading}
-            />
-
-            {/* Main Content */}
-            <main className="flex-1 pt-20 relative">
-                {/* Search Bar */}
-                <div className="absolute top-24 left-0 right-0 z-20 px-4">
-                    <ZipSearch
-                        onSearch={handleSearch}
-                        isLoading={isLoading}
-                        initialZip={zipCode}
+        <GlassBlitzEntrance
+            text="SUPER BOWL LX"
+            subtext="WING COMMAND"
+            onComplete={() => setBannerDone(true)}
+        >
+            <div className="min-h-screen flex flex-col relative">
+                {/* ===== Grass Field Background — the MAIN page bg behind dashboard ===== */}
+                <div className="fixed inset-0 z-[-2] pointer-events-none">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                        src="/field-bg.jpg"
+                        alt=""
+                        className="w-full h-full object-cover"
                     />
+                    {/* Sunny washed-out overlay so UI is readable */}
+                    <div className="absolute inset-0" style={{
+                        background: 'linear-gradient(180deg, rgba(255,255,255,0.4) 0%, rgba(255,255,255,0.2) 40%, rgba(22,163,74,0.06) 100%)',
+                    }} />
                 </div>
 
-                {/* Map */}
-                <div className="absolute inset-0 pt-20">
-                    {zipCode ? (
-                        <WingMap
-                            spots={spots}
-                            viewport={viewport}
-                            onViewportChange={setViewport}
-                            onSpotClick={handleSpotClick}
-                            selectedSpotId={selectedSpot?.id}
-                        />
-                    ) : (
-                        <div className="h-full flex items-center justify-center">
-                            <div className="text-center max-w-md px-4">
-                                <div className="text-6xl mb-4">🍗</div>
-                                <h2 className="font-heading text-3xl text-gray-100 mb-2">
-                                    Find Wings Near You
-                                </h2>
-                                <p className="text-gray-400">
-                                    Enter your zip code above to discover the best chicken wing deals
-                                    for Super Bowl LX in your area.
-                                </p>
+                {/* ===== Command Jumbotron — bright header ===== */}
+                <CommandJumbotron
+                    stats={stats}
+                    isSearching={isSearching}
+                    flavor={flavor}
+                    hasResults={hasResults}
+                />
+
+                {/* ===== Hero Section — Coach Wing + Playbook ===== */}
+                {/* NO opaque wrapper — field shows through directly */}
+                <CoachHero
+                    flavor={flavor}
+                    hasResults={hasResults}
+                    isSearching={isSearching}
+                    coachSpeech={coachSpeech}
+                    bannerDone={bannerDone}
+                    zipCode={zipCode}
+                    onFlavorSelect={handleFlavorSelect}
+                    onSearch={handleSearch}
+                />
+
+                {/* ===== Loading State — Trash Talk Ticker ===== */}
+                <AnimatePresence>
+                    {isSearching && (
+                        <motion.section
+                            className="relative z-10 px-4 py-6"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                        >
+                            <div className="max-w-3xl mx-auto">
+                                <TrashTalkTicker isActive={isSearching} flavor={flavor} />
                             </div>
-                        </div>
+                        </motion.section>
                     )}
-                </div>
+                </AnimatePresence>
 
-                {/* Status message */}
-                {data?.message && !isLoading && spots.length === 0 && (
-                    <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20">
-                        <div className="glass px-4 py-2 rounded-lg text-gray-300 text-sm">
-                            {data.message}
-                        </div>
+                {/* ===== Results — Scouting Report (in frosted glass) ===== */}
+                <AnimatePresence>
+                    {(hasResults || isSearching) && (
+                        <motion.section
+                            className="relative z-10 px-4 pb-16 pt-4"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.3 }}
+                        >
+                            <div className="max-w-7xl mx-auto space-y-6">
+                                <StatsBar stats={stats} locationName={locationName} />
+
+                                <motion.p
+                                    className="font-marker text-stadium-green text-sm text-center"
+                                    style={{ opacity: 0.6 }}
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 0.6 }}
+                                    transition={{ delay: 0.4 }}
+                                >
+                                    Step 3: The Scouting Report
+                                </motion.p>
+
+                                <TradingCardGrid
+                                    spots={spots}
+                                    isLoading={isSearching && spots.length === 0}
+                                    flavor={flavor}
+                                />
+
+                                {!isSearching && spots.length === 0 && data?.message && (
+                                    <motion.div
+                                        className="text-center py-12"
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                    >
+                                        <span className="text-5xl mb-4 block">☀️</span>
+                                        <p className="text-gray-600 font-heading tracking-wider">{data.message}</p>
+                                        <p className="text-gray-400 text-xs mt-2 font-marker">
+                                            Coach Wing says: &quot;Even the sun can&apos;t find wings here. Try another zip!&quot;
+                                        </p>
+                                    </motion.div>
+                                )}
+                            </div>
+                        </motion.section>
+                    )}
+                </AnimatePresence>
+
+                {/* ===== Footer ===== */}
+                <footer className="mt-auto py-8 text-center relative z-[5]">
+                    <div className="max-w-md mx-auto space-y-2 rounded-xl px-4 py-3" style={{
+                        background: 'rgba(255,255,255,0.6)',
+                        backdropFilter: 'blur(8px)',
+                    }}>
+                        <p className="text-gray-500 text-xs tracking-[0.15em] font-heading">
+                            SUPER BOWL LX: WING COMMAND &middot; FEB 9, 2026
+                        </p>
+                        <p className="text-gray-400 text-[10px] font-marker">
+                            Not affiliated with the NFL, but our wings hit harder. ☀️🏈
+                        </p>
                     </div>
-                )}
-            </main>
-
-            {/* Wing Card Sheet */}
-            <Sheet
-                isOpen={!!selectedSpot}
-                onClose={() => setSelectedSpot(null)}
-                title={selectedSpot?.name}
-            >
-                {selectedSpot && (
-                    <WingCard
-                        spot={selectedSpot}
-                        onClose={() => setSelectedSpot(null)}
-                    />
-                )}
-            </Sheet>
-        </div>
+                </footer>
+            </div>
+        </GlassBlitzEntrance>
     );
 }
 
+// ===========================================
+// Root Page Component
+// ===========================================
 export default function Home() {
     return (
         <QueryClientProvider client={queryClient}>
-            <HomeContent />
+            <WingCommandContent />
         </QueryClientProvider>
     );
 }

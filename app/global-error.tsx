@@ -39,7 +39,7 @@ export default function GlobalError({ error, reset }: GlobalErrorProps) {
                         color: '#9ca3af',
                         marginBottom: '1.5rem',
                     }}>
-                        Wing Scout encountered a critical error.
+                        Wing Command encountered a critical error.
                         Please try refreshing the page.
                     </p>
                     {error.digest && (

@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone', // Required for Render.com deployment
   images: {
     remotePatterns: [
       {
@@ -17,14 +18,6 @@ const nextConfig = {
       },
       {
         protocol: 'https',
-        hostname: '**.yelp.com',
-      },
-      {
-        protocol: 'https',
-        hostname: '**.yelpcdn.com',
-      },
-      {
-        protocol: 'https',
         hostname: 'images.unsplash.com',
       },
     ],
@@ -34,8 +27,6 @@ const nextConfig = {
       bodySizeLimit: '2mb',
     },
   },
-  // Transpile mapbox-gl for SSR compatibility
-  transpilePackages: ['mapbox-gl'],
 };
 
 export default nextConfig;
