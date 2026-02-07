@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone', // Required for Render.com deployment
+  // output: 'standalone', // Only needed for Docker-based deploys without node_modules
   images: {
     remotePatterns: [
       {

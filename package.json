@@ -5,8 +5,8 @@
   "description": "Super Bowl LX: Wing Command — Your Game Day Wing HQ. Find the best chicken wings for your Super Bowl party.",
   "scripts": {
     "dev": "next dev",
-    "build": "next build && cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/",
-    "start": "HOSTNAME=0.0.0.0 node .next/standalone/server.js",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3000}",
     "lint": "next lint",
     "type-check": "tsc --noEmit",
     "warm": "npx tsx scripts/cache-warmer.ts",
