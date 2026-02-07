@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, MapPin, Phone, ExternalLink, Truck, DollarSign, UtensilsCrossed } from 'lucide-react';
+import { Clock, MapPin, Phone, ExternalLink, DollarSign, UtensilsCrossed } from 'lucide-react';
 import { WingSpot } from '@/lib/types';
 import { MenuModal } from './MenuModal';
 import {
@@ -10,7 +10,6 @@ import {
     getStatusEmoji,
     formatRelativeTime,
     formatDeliveryTime,
-    getGoogleMapsUrl,
     getOrderUrl,
     getPlatformLabel,
     getTelLink,
@@ -353,15 +352,6 @@ export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected,
                                 <Phone className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
                             </a>
                         )}
-                        <a
-                            href={getGoogleMapsUrl(spot.address || `${spot.name} near ${spot.zip_code}`)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"
-                            title="Directions"
-                        >
-                            <Truck className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
-                        </a>
                         <a
                             href={getOrderUrl(spot)}
                             target="_blank"

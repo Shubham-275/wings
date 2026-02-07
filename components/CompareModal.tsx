@@ -2,7 +2,7 @@
 
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Trophy, Clock, Tag, MapPin } from 'lucide-react';
+import { X, Trophy, Clock, Tag } from 'lucide-react';
 import { WingSpot } from '@/lib/types';
 import { getPlatformLabel, getOrderUrl } from '@/lib/utils';
 
@@ -192,23 +192,8 @@ export function CompareModal({ spots, isOpen, onClose }: CompareModalProps) {
                                                 ))}
                                             </tr>
 
-                                            {/* Deal */}
-                                            <tr className="border-b border-amber-200/20">
-                                                <td className="py-2.5 px-2 font-marker text-[11px] text-gray-500">
-                                                    DEAL
-                                                </td>
-                                                {spots.map(spot => (
-                                                    <td
-                                                        key={spot.id}
-                                                        className="text-center py-2.5 px-2 text-xs text-amber-700"
-                                                    >
-                                                        {spot.deal_text || '—'}
-                                                    </td>
-                                                ))}
-                                            </tr>
-
                                             {/* Platform / Source */}
-                                            <tr className="border-b border-amber-200/20">
+                                            <tr>
                                                 <td className="py-2.5 px-2 font-marker text-[11px] text-gray-500">
                                                     SOURCE
                                                 </td>
@@ -224,20 +209,6 @@ export function CompareModal({ spots, isOpen, onClose }: CompareModalProps) {
                                                 ))}
                                             </tr>
 
-                                            {/* Location */}
-                                            <tr>
-                                                <td className="py-2.5 px-2 font-marker text-[11px] text-gray-500 flex items-center gap-1">
-                                                    <MapPin className="w-3 h-3" /> ADDRESS
-                                                </td>
-                                                {spots.map(spot => (
-                                                    <td
-                                                        key={spot.id}
-                                                        className="text-center py-2.5 px-2 text-[10px] text-gray-500 leading-tight"
-                                                    >
-                                                        {spot.address || `Near ${spot.zip_code}`}
-                                                    </td>
-                                                ))}
-                                            </tr>
                                         </tbody>
                                     </table>
                                 </div>
