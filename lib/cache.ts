@@ -30,6 +30,7 @@ const keys = {
     geocode: (zip: string) => `geocode:${zip}`,
     scrapeResult: (zip: string) => `scrape_result:${zip}`,
     rateLimit: (ip: string) => `rate_limit:${ip}`,
+    menuScouting: (spotId: string) => `menu:scouting:${spotId}`,
 };
 
 /**
@@ -279,6 +280,59 @@ export async function invalidateMenuCache(spotId: string): Promise<void> {
         await redis.del(menuKey(spotId));
     } catch (error) {
         console.error('Redis invalidateMenuCache error:', error);
+    }
+}
+
+// ===========================================
+// Menu Scouting Lock (Redis-based deduplication)
+// ===========================================
+
+// Scouting lock TTL: 3 minutes (covers full Mino run + buffer)
+const SCOUTING_LOCK_TTL = 3 * 60;
+
+/**
+ * Acquire a scouting lock for a spot (SET NX — atomic set-if-not-exists).
+ * Returns true if WE acquired the lock (first request).
+ * Returns false if another instance is already scouting this spot.
+ */
+export async function setScoutingLock(spotId: string): Promise<boolean> {
+    if (!redis) return true; // No Redis = allow (dev mode)
+    try {
+        const result = await redis.set(
+            keys.menuScouting(spotId),
+            Date.now().toString(),
+            { nx: true, ex: SCOUTING_LOCK_TTL }
+        );
+        return result === 'OK';
+    } catch (error) {
+        console.error('Redis setScoutingLock error:', error);
+        return true; // Allow on error (graceful degradation)
+    }
+}
+
+/**
+ * Check if a scouting lock exists (another instance is scraping).
+ */
+export async function isScoutingInProgress(spotId: string): Promise<boolean> {
+    if (!redis) return false;
+    try {
+        const val = await redis.get(keys.menuScouting(spotId));
+        return val !== null;
+    } catch (error) {
+        console.error('Redis isScoutingInProgress error:', error);
+        return false;
+    }
+}
+
+/**
+ * Clear the scouting lock after scrape completes (success or failure).
+ */
+export async function clearScoutingLock(spotId: string): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.del(keys.menuScouting(spotId));
+    } catch (error) {
+        console.error('Redis clearScoutingLock error:', error);
     }
 }
 

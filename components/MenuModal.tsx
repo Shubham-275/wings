@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X } from 'lucide-react';
+import { X, ExternalLink } from 'lucide-react';
 import { WingSpot, MenuResponse, MenuSection, MenuItem } from '@/lib/types';
 
 interface MenuModalProps {
@@ -27,6 +27,43 @@ function formatPrice(price: number | null): string {
     return `$${price.toFixed(2)}`;
 }
 
+/** Get platform name from URL */
+function getPlatformName(url: string): string {
+    if (url.includes('doordash')) return 'DoorDash';
+    if (url.includes('ubereats')) return 'Uber Eats';
+    if (url.includes('grubhub')) return 'Grubhub';
+    return 'restaurant page';
+}
+
+/** Get the best external URL for this spot */
+function getExternalUrl(spot: WingSpot, menuSourceUrl?: string): string | null {
+    // Prefer source_url from the menu response (may come from API)
+    if (menuSourceUrl) return menuSourceUrl;
+    // Then try the spot's platform IDs
+    if (spot.platform_ids?.source_url) return spot.platform_ids.source_url;
+    // Fallback to Google Maps search
+    if (spot.name && spot.address) {
+        return `https://www.google.com/maps/search/${encodeURIComponent(spot.name + ' ' + spot.address)}`;
+    }
+    return null;
+}
+
+// "View Full Menu" link component
+function ViewFullMenuLink({ url, className }: { url: string; className?: string }) {
+    const platform = getPlatformName(url);
+    return (
+        <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`inline-flex items-center gap-1.5 text-sm font-heading text-stadium-green hover:text-stadium-green/80 underline underline-offset-2 transition-colors ${className || ''}`}
+        >
+            View Full Menu
+            <ExternalLink className="w-3.5 h-3.5" />
+        </a>
+    );
+}
+
 // Loading skeleton for menu items
 function MenuSkeleton() {
     return (
@@ -45,7 +82,7 @@ function MenuSkeleton() {
                 </div>
             ))}
             <p className="text-xs text-center text-amber-700/50 pt-2">
-                Scouting the menu via Google Maps...
+                Scouting wing items...
             </p>
         </div>
     );
@@ -106,6 +143,7 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [scouting, setScouting] = useState(false);
+    const [sourceUrl, setSourceUrl] = useState<string | null>(null);
     const hasFetched = useRef(false);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -136,6 +174,9 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
             clearTimeout(timeoutId);
             const data: MenuResponse = await res.json();
 
+            // Capture source_url from API response
+            if (data.source_url) setSourceUrl(data.source_url);
+
             if (data.success && data.menu) {
                 setMenu(data);
             } else if (data.scouting) {
@@ -162,20 +203,23 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
     function startPolling() {
         stopPolling(); // Prevent double polling
         let pollCount = 0;
-        const maxPolls = 18; // 18 polls x 5s = 90s max polling
+        const maxPolls = 24; // 24 polls x 5s = 120s max polling
 
         pollRef.current = setInterval(async () => {
             pollCount++;
             if (pollCount > maxPolls || !isOpen) {
                 stopPolling();
                 setScouting(false);
-                setError('Menu could not be loaded. Try again later.');
+                setError('Wing items could not be loaded. Try again later.');
                 return;
             }
 
             try {
-                const res = await fetch(`/api/menu?spot_id=${encodeURIComponent(spot.id)}`);
+                // poll=true ensures NO new Mino scrapes are triggered
+                const res = await fetch(`/api/menu?spot_id=${encodeURIComponent(spot.id)}&poll=true`);
                 const data: MenuResponse = await res.json();
+
+                if (data.source_url) setSourceUrl(data.source_url);
 
                 if (data.success && data.menu) {
                     stopPolling();
@@ -235,6 +279,9 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
         })
         : [];
 
+    // Get the external URL for "View Full Menu" link
+    const externalUrl = getExternalUrl(spot, sourceUrl || menu?.source_url || undefined);
+
     return (
         <AnimatePresence>
             {isOpen && (
@@ -264,7 +311,7 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                         {spot.name}
                                     </h2>
                                     <p className="text-[10px] text-amber-600 uppercase tracking-widest font-heading">
-                                        Scouting Report Menu
+                                        Wing Items
                                     </p>
                                 </div>
                                 <button
@@ -283,10 +330,10 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                     <div className="text-center py-8">
                                         <div className="text-4xl mb-3 animate-bounce">🔍</div>
                                         <p className="text-amber-700 font-heading text-sm mb-2">
-                                            Scouting Menu...
+                                            Scouting Wing Items...
                                         </p>
                                         <p className="text-xs text-amber-600/60 mb-4">
-                                            Our scout is reading the menu in the background.
+                                            Our scout is finding wing items in the background.
                                             <br />This usually takes 30-60 seconds.
                                         </p>
                                         <div className="flex justify-center gap-1.5 mb-3">
@@ -298,9 +345,17 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                                 />
                                             ))}
                                         </div>
-                                        <p className="text-[10px] text-amber-500">
-                                            The menu will appear automatically when ready
+                                        <p className="text-[10px] text-amber-500 mb-4">
+                                            Wing items will appear automatically when ready
                                         </p>
+                                        {externalUrl && (
+                                            <div className="pt-2 border-t border-amber-200/30">
+                                                <ViewFullMenuLink url={externalUrl} className="text-xs" />
+                                                <p className="text-[10px] text-amber-500 mt-1">
+                                                    on {getPlatformName(externalUrl)}
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -308,7 +363,7 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                     <div className="text-center py-8">
                                         <div className="text-4xl mb-3">📋</div>
                                         <p className="text-amber-700 font-heading text-sm mb-2">
-                                            Menu Not Available
+                                            Wing Items Not Available
                                         </p>
                                         <p className="text-xs text-amber-600/60 mb-4">
                                             {error}
@@ -319,6 +374,14 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                         >
                                             Try Again
                                         </button>
+                                        {externalUrl && (
+                                            <div className="mt-4 pt-3 border-t border-amber-200/30">
+                                                <ViewFullMenuLink url={externalUrl} className="text-xs" />
+                                                <p className="text-[10px] text-amber-500 mt-1">
+                                                    on {getPlatformName(externalUrl)}
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 
@@ -328,8 +391,13 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                             <div className="text-center py-8">
                                                 <div className="text-4xl mb-3">📋</div>
                                                 <p className="text-amber-700 font-heading text-sm">
-                                                    No menu items found
+                                                    No wing items found
                                                 </p>
+                                                {externalUrl && (
+                                                    <div className="mt-4">
+                                                        <ViewFullMenuLink url={externalUrl} />
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (
                                             <>
@@ -341,10 +409,18 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                                     />
                                                 ))}
 
-                                                {/* Footer info */}
-                                                <div className="text-center pt-2 pb-1">
-                                                    <p className="text-[10px] text-amber-500">
-                                                        {menu.cached ? 'Cached menu' : 'Freshly scouted'} via {menu.menu.source === 'mino_scrape' ? 'AI scraping' : menu.menu.source}
+                                                {/* View Full Menu link + Footer */}
+                                                <div className="text-center pt-3 pb-1 space-y-2">
+                                                    {externalUrl && (
+                                                        <div>
+                                                            <ViewFullMenuLink url={externalUrl} />
+                                                            <p className="text-[10px] text-amber-500 mt-0.5">
+                                                                on {getPlatformName(externalUrl)}
+                                                            </p>
+                                                        </div>
+                                                    )}
+                                                    <p className="text-[10px] text-amber-400">
+                                                        {menu.cached ? 'Cached' : 'Freshly scouted'} via {menu.menu.source === 'mino_scrape' ? 'AI scraping' : menu.menu.source}
                                                     </p>
                                                 </div>
                                             </>

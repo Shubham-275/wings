@@ -151,6 +151,7 @@ export interface Menu {
     source: 'yelp' | 'mino_scrape' | 'cached';
     has_wings: boolean;
     wing_section_index?: number;
+    source_url?: string;
 }
 
 /**
@@ -162,6 +163,7 @@ export interface MenuResponse {
     cached: boolean;
     message: string;
     scouting?: boolean; // true when menu is being fetched in the background
+    source_url?: string; // link to restaurant's page (DoorDash, UberEats, etc.)
 }
 
 /**

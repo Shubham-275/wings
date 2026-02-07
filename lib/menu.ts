@@ -1,16 +1,17 @@
 // ===========================================
 // Wing Scout - Menu Fetching Service
+// Wings-only scraping with background fetch
 // ===========================================
 
 import axios from 'axios';
-import { Menu, MenuSection, MenuItem, PlatformIds } from './types';
+import { Menu, MenuSection, MenuItem, PlatformIds, AgentQLResponse } from './types';
 import { executeMinoMenuScrape, executeMinoScrape } from './agentql';
-import { cacheMenu, cacheChainMenu } from './cache';
+import { cacheMenu, cacheChainMenu, clearScoutingLock } from './cache';
 import { createServerClient } from './supabase';
 
 /**
  * Main menu fetching function with fallback chain
- * Priority: 1. Yelp Fusion API  2. Mino scraping
+ * Priority: 1. Yelp Fusion API  2. Mino scraping (45s timeout)
  */
 export async function fetchMenu(
     spotId: string,
@@ -21,13 +22,13 @@ export async function fetchMenu(
     // 1. Try Yelp Fusion API (5k/day free tier)
     const yelpMenu = await fetchYelpMenu(name, address);
     if (yelpMenu) {
-        return buildMenu(spotId, yelpMenu, 'yelp');
+        return buildMenu(spotId, yelpMenu, 'yelp', platformIds?.source_url);
     }
 
-    // 2. Fallback to Mino scraping (comprehensive but slower)
+    // 2. Fallback to Mino scraping (wings-only, 45s timeout)
     const scrapedMenu = await scrapeMenuWithMino(name, address, platformIds);
     if (scrapedMenu) {
-        return buildMenu(spotId, scrapedMenu, 'mino_scrape');
+        return buildMenu(spotId, scrapedMenu, 'mino_scrape', platformIds?.source_url);
     }
 
     return null;
@@ -78,92 +79,105 @@ async function fetchYelpMenu(
     }
 }
 
-/**
- * Scrape menu directly from delivery platform using Mino
- * This is the most reliable but slowest option
- */
-async function scrapeMenuWithMino(
-    name: string,
-    address: string,
-    platformIds?: PlatformIds
-): Promise<MenuSection[] | null> {
-    // Determine best URL to scrape based on available platform IDs
-    let scrapeUrl: string;
+// ===========================================
+// Wings-Only Mino Goal Prompts
+// ===========================================
 
-    let goal: string;
+function getWingsOnlyGoal(hasDirectUrl: boolean): string {
+    if (hasDirectUrl) {
+        return `Navigate to this restaurant page. Extract ONLY wing-related menu items and any wing deals/combos.
 
-    if (platformIds?.source_url) {
-        // Use the direct restaurant URL if available (DoorDash, UberEats, Grubhub)
-        scrapeUrl = platformIds.source_url;
-        goal = `Navigate to this restaurant page and extract the full menu.
-If the page has a text-based menu, extract items directly.
-If you see menu images or photos, read the text from the images to extract item names and prices.
+Look for items matching these keywords: wings, buffalo wings, boneless wings, bone-in wings, drumettes, tenders, chicken tenders, nuggets, wing combo, wing deal, wing special, wing bucket.
+
+SKIP all non-wing items (burgers, fries, drinks, desserts, salads, sandwiches, etc).
 
 Return a JSON object with an array called "sections", where each section has:
-- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
-- items (array of menu items)
+- name (section name like "Wings", "Boneless Wings", "Wing Combos", "Deals")
+- items (array of items)
 
 Each item should have:
 - name (item name)
 - description (optional description text)
 - price (number only, just the dollar amount without $ symbol)
+- quantity (number of pieces if mentioned, like "10 pc" = 10)
 
-Focus especially on wing items and chicken dishes. Include all visible menu sections.
-Be efficient — extract what's visible quickly, don't navigate through too many pages.`;
-    } else {
-        // Fallback to Google Maps for menu extraction
-        scrapeUrl = `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
-        goal = `Find this restaurant on Google Maps and extract its menu.
-Steps:
-1. Click on the restaurant listing in the search results
-2. Look for a "Menu" tab or section — if found, extract items from it
-3. If no menu tab, check the "Photos" section for menu images — you can read text from images to extract menu items and prices
-4. If you find menu photos, read every item name, description, and price visible in the image
-
-Return a JSON object with an array called "sections", where each section has:
-- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
-- items (array of menu items)
-
-Each item should have:
-- name (item name)
-- description (optional description text)
-- price (number only, just the dollar amount without $ symbol)
-
-Focus especially on wing items and chicken dishes. Include all visible menu sections.
-Be efficient — don't spend more than 30 seconds navigating. Extract what you can find quickly.`;
+Be fast — only look at wing-related sections. Do not scroll through the entire menu.`;
     }
 
+    return `Find this restaurant on Google Maps and look for wing items on their menu.
+Steps:
+1. Click on the restaurant listing
+2. Look for a "Menu" tab or section
+3. Find ONLY wing-related items: wings, buffalo wings, boneless, bone-in, drumettes, tenders, nuggets
+4. If you see menu images, read only items that appear to be wings or chicken tenders
+
+SKIP all non-wing items (burgers, fries, drinks, desserts, sandwiches, etc).
+
+Return a JSON object with an array called "sections", where each section has:
+- name (section name like "Wings", "Boneless Wings", "Wing Combos")
+- items (array of items)
+
+Each item should have:
+- name (item name)
+- description (optional description text)
+- price (number only, just the dollar amount without $ symbol)
+- quantity (number of pieces if mentioned)
+
+Be fast — spend no more than 20 seconds. Only extract wing items.`;
+}
+
+/**
+ * Scrape wing items from restaurant using Mino
+ * Accepts optional scrape function for timeout flexibility:
+ * - Default: executeMinoMenuScrape (45s timeout) for fast path
+ * - Background: executeMinoScrape (120s timeout) for background scrape
+ */
+export async function scrapeMenuWithMino(
+    name: string,
+    address: string,
+    platformIds?: PlatformIds,
+    scrapeFn?: (url: string, goal: string) => Promise<AgentQLResponse>
+): Promise<MenuSection[] | null> {
+    const scrape = scrapeFn || executeMinoMenuScrape;
+
+    // Determine best URL to scrape
+    const hasDirectUrl = !!platformIds?.source_url;
+    const scrapeUrl = hasDirectUrl
+        ? platformIds!.source_url!
+        : `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
+    const goal = getWingsOnlyGoal(hasDirectUrl);
+
     try {
-        console.log(`Mino menu scrape: ${scrapeUrl}`);
-        const result = await executeMinoMenuScrape(scrapeUrl, goal);
+        console.log(`Mino wing scrape: ${scrapeUrl}`);
+        const result = await scrape(scrapeUrl, goal);
 
         if (!result.success || !result.data) {
-            console.log('Mino menu scrape: No results');
+            console.log('Mino wing scrape: No results');
             return null;
         }
 
         // Mino can return result as a JSON string or a parsed object — handle both
         let parsed: unknown = result.data;
-        console.log(`Mino menu scrape: result.data type = ${typeof parsed}`);
+        console.log(`Mino wing scrape: result.data type = ${typeof parsed}`);
         if (typeof parsed === 'string') {
             try {
                 parsed = JSON.parse(parsed);
-                console.log('Mino menu scrape: Parsed string result to object');
+                console.log('Mino wing scrape: Parsed string result to object');
             } catch {
-                console.log('Mino menu scrape: Failed to parse string result as JSON');
+                console.log('Mino wing scrape: Failed to parse string result as JSON');
                 return null;
             }
         }
 
         const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
         if (!data.sections || data.sections.length === 0) {
-            console.log('Mino menu scrape: No sections found in response', JSON.stringify(data).substring(0, 200));
+            console.log('Mino wing scrape: No sections found in response', JSON.stringify(data).substring(0, 200));
             return null;
         }
 
         // Parse and structure the menu sections
         const sections: MenuSection[] = data.sections.map(section => ({
-            name: String(section.name || 'Menu'),
+            name: String(section.name || 'Wings'),
             items: (section.items || []).map((item: unknown) => {
                 const itemObj = item as Record<string, unknown>;
                 return {
@@ -177,10 +191,10 @@ Be efficient — don't spend more than 30 seconds navigating. Extract what you c
             }),
         }));
 
-        console.log(`Mino menu scrape: Found ${sections.length} sections`);
+        console.log(`Mino wing scrape: Found ${sections.length} sections`);
         return sections;
     } catch (error) {
-        console.error('Mino menu scrape error:', error);
+        console.error('Mino wing scrape error:', error);
         return null;
     }
 }
@@ -191,7 +205,8 @@ Be efficient — don't spend more than 30 seconds navigating. Extract what you c
 function buildMenu(
     spotId: string,
     sections: MenuSection[],
-    source: 'yelp' | 'mino_scrape'
+    source: 'yelp' | 'mino_scrape',
+    sourceUrl?: string
 ): Menu {
     return {
         spot_id: spotId,
@@ -200,6 +215,7 @@ function buildMenu(
         source,
         has_wings: detectWingItems(sections),
         wing_section_index: findWingSectionIndex(sections),
+        source_url: sourceUrl,
     };
 }
 
@@ -290,14 +306,11 @@ function detectDeal(name: string, description?: string): boolean {
 // Background Menu Scraping
 // ===========================================
 
-// Track in-flight background scrapes so we don't launch duplicates
-const backgroundScrapes = new Set<string>();
-
 /**
- * Fire-and-forget background menu scrape.
- * Uses the full 120s Mino timeout (not the 45s menu timeout).
+ * Fire-and-forget background wing scrape.
+ * Uses the full 120s Mino timeout via executeMinoScrape.
  * On success, caches the result in Redis + chain cache + Supabase.
- * Called when the fast 45s attempt fails — Mino keeps running in background.
+ * Redis scouting lock prevents duplicates across serverless instances.
  */
 export function startBackgroundMenuScrape(
     spotId: string,
@@ -305,95 +318,19 @@ export function startBackgroundMenuScrape(
     address: string,
     platformIds?: PlatformIds
 ): void {
-    // Don't launch duplicate background scrapes
-    if (backgroundScrapes.has(spotId)) {
-        console.log(`Background scrape already running for ${spotId}`);
-        return;
-    }
+    console.log(`Starting background wing scrape for ${spotId}: ${name}`);
 
-    backgroundScrapes.add(spotId);
-    console.log(`Starting background menu scrape for ${spotId}: ${name}`);
-
-    // Fire-and-forget — uses the full 120s scraper timeout
+    // Fire-and-forget — reuses scrapeMenuWithMino with full 120s timeout
     (async () => {
         try {
-            // Build the same scrape URL and goal as scrapeMenuWithMino
-            let scrapeUrl: string;
-            let goal: string;
+            const sections = await scrapeMenuWithMino(name, address, platformIds, executeMinoScrape);
 
-            if (platformIds?.source_url) {
-                scrapeUrl = platformIds.source_url;
-                goal = `Navigate to this restaurant page and extract the full menu.
-If the page has a text-based menu, extract items directly.
-If you see menu images or photos, read the text from the images to extract item names and prices.
-
-Return a JSON object with an array called "sections", where each section has:
-- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
-- items (array of menu items)
-
-Each item should have:
-- name (item name)
-- description (optional description text)
-- price (number only, just the dollar amount without $ symbol)
-
-Focus especially on wing items and chicken dishes. Include all visible menu sections.`;
-            } else {
-                scrapeUrl = `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
-                goal = `Find this restaurant on Google Maps and extract its menu.
-Steps:
-1. Click on the restaurant listing in the search results
-2. Look for a "Menu" tab or section — if found, extract items from it
-3. If no menu tab, check the "Photos" section for menu images — you can read text from images to extract menu items and prices
-4. If you find menu photos, read every item name, description, and price visible in the image
-
-Return a JSON object with an array called "sections", where each section has:
-- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
-- items (array of menu items)
-
-Each item should have:
-- name (item name)
-- description (optional description text)
-- price (number only, just the dollar amount without $ symbol)
-
-Focus especially on wing items and chicken dishes. Include all visible menu sections.`;
-            }
-
-            console.log(`Background Mino scrape: ${scrapeUrl}`);
-            const result = await executeMinoScrape(scrapeUrl, goal); // Full 120s timeout
-
-            if (!result.success || !result.data) {
-                console.log(`Background scrape failed for ${spotId}: ${result.error}`);
+            if (!sections || sections.length === 0) {
+                console.log(`Background scrape: no wing items for ${spotId}`);
                 return;
             }
 
-            // Parse response (same as scrapeMenuWithMino)
-            let parsed: unknown = result.data;
-            if (typeof parsed === 'string') {
-                try { parsed = JSON.parse(parsed); } catch { return; }
-            }
-
-            const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
-            if (!data.sections || data.sections.length === 0) {
-                console.log(`Background scrape: no sections for ${spotId}`);
-                return;
-            }
-
-            const sections: MenuSection[] = data.sections.map(section => ({
-                name: String(section.name || 'Menu'),
-                items: (section.items || []).map((item: unknown) => {
-                    const itemObj = item as Record<string, unknown>;
-                    return {
-                        name: String(itemObj.name || 'Unknown Item'),
-                        description: itemObj.description ? String(itemObj.description) : undefined,
-                        price: itemObj.price ? parseFloat(String(itemObj.price)) : null,
-                        quantity: itemObj.quantity ? parseInt(String(itemObj.quantity)) : undefined,
-                        price_per_wing: calculatePricePerWing(itemObj.price, itemObj.quantity, String(itemObj.name || '')),
-                        is_deal: detectDeal(String(itemObj.name || ''), String(itemObj.description || '')),
-                    };
-                }),
-            }));
-
-            const menu = buildMenu(spotId, sections, 'mino_scrape');
+            const menu = buildMenu(spotId, sections, 'mino_scrape', platformIds?.source_url);
 
             // Cache in Redis (per-spot + chain)
             await cacheMenu(spotId, menu);
@@ -420,8 +357,8 @@ Focus especially on wing items and chicken dishes. Include all visible menu sect
         } catch (err) {
             console.error(`Background scrape error for ${spotId}:`, err);
         } finally {
-            backgroundScrapes.delete(spotId);
+            // ALWAYS clear the Redis scouting lock, even on failure
+            await clearScoutingLock(spotId);
         }
     })();
 }
-

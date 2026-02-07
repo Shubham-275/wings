@@ -1,22 +1,25 @@
 // ===========================================
 // Wing Scout - Menu API Endpoint
+// Redis-based dedup, background scraping, poll support
 // ===========================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { getCachedMenu, cacheMenu, getCachedChainMenu, cacheChainMenu } from '@/lib/cache';
-import { fetchMenu, startBackgroundMenuScrape } from '@/lib/menu';
+import {
+    getCachedMenu, cacheMenu,
+    getCachedChainMenu, cacheChainMenu,
+    setScoutingLock, isScoutingInProgress,
+} from '@/lib/cache';
+import { startBackgroundMenuScrape } from '@/lib/menu';
 import { MenuResponse, Menu } from '@/lib/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60; // 60 seconds max for menu fetch
-
-// In-flight request deduplication
-const inFlightRequests = new Map<string, Promise<MenuResponse>>();
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const spotId = searchParams.get('spot_id');
+    const isPoll = searchParams.get('poll') === 'true';
 
     // Validate spot_id parameter
     if (!spotId) {
@@ -36,20 +39,6 @@ export async function GET(request: NextRequest) {
         });
     }
 
-    // Check for in-flight request (deduplication)
-    const inFlightKey = `menu:${spotId}`;
-    if (inFlightRequests.has(inFlightKey)) {
-        try {
-            const result = await inFlightRequests.get(inFlightKey)!;
-            return NextResponse.json<MenuResponse>({
-                ...result,
-                message: result.message + ' (deduplicated)',
-            });
-        } catch {
-            inFlightRequests.delete(inFlightKey);
-        }
-    }
-
     try {
         // 1. Check Redis cache first (1-hour TTL)
         const cachedMenu = await getCachedMenu(spotId);
@@ -60,6 +49,7 @@ export async function GET(request: NextRequest) {
                 menu: { ...cachedMenu, source: 'cached' } as Menu,
                 cached: true,
                 message: 'Menu loaded from cache',
+                source_url: cachedMenu.source_url,
             });
         }
 
@@ -77,7 +67,6 @@ export async function GET(request: NextRequest) {
             const ageHours = (Date.now() - fetchedAt.getTime()) / (1000 * 60 * 60);
 
             if (ageHours < 24) {
-                // Cache in Redis and return
                 const menu: Menu = {
                     spot_id: dbMenu.spot_id,
                     sections: dbMenu.sections,
@@ -85,6 +74,7 @@ export async function GET(request: NextRequest) {
                     source: 'cached',
                     has_wings: dbMenu.has_wings,
                     wing_section_index: dbMenu.wing_section_index,
+                    source_url: dbMenu.source_url,
                 };
                 await cacheMenu(spotId, menu);
                 console.log(`Menu loaded from database for ${spotId}`);
@@ -93,6 +83,7 @@ export async function GET(request: NextRequest) {
                     menu,
                     cached: true,
                     message: 'Menu loaded from database',
+                    source_url: menu.source_url,
                 });
             }
         }
@@ -112,80 +103,67 @@ export async function GET(request: NextRequest) {
             );
         }
 
+        const sourceUrl = spot.platform_ids?.source_url || undefined;
+
         // 4. Check chain-level cache (shared across all locations of same restaurant)
         const chainMenu = await getCachedChainMenu(spot.name);
         if (chainMenu) {
             console.log(`Chain cache hit for "${spot.name}" (spot ${spotId})`);
-            // Also cache under this spot's ID for faster next lookup
-            const spotMenu: Menu = { ...chainMenu, spot_id: spotId, source: 'cached' };
+            const spotMenu: Menu = { ...chainMenu, spot_id: spotId, source: 'cached', source_url: sourceUrl };
             await cacheMenu(spotId, spotMenu);
             return NextResponse.json<MenuResponse>({
                 success: true,
                 menu: spotMenu,
                 cached: true,
                 message: `Menu loaded from chain cache (${spot.name})`,
+                source_url: sourceUrl,
             });
         }
 
-        // 5. Fetch fresh menu with deduplication
-        const fetchPromise = (async (): Promise<MenuResponse> => {
-            console.log(`Fetching fresh menu for ${spotId}: ${spot.name}`);
-            const menu = await fetchMenu(
-                spotId,
-                spot.name,
-                spot.address,
-                spot.platform_ids
-            );
-
-            if (!menu) {
-                // Fast path failed (45s timeout) — launch background scrape with full 120s timeout
-                startBackgroundMenuScrape(spotId, spot.name, spot.address, spot.platform_ids);
-                return {
-                    success: false,
-                    menu: null,
-                    cached: false,
-                    scouting: true,
-                    message: 'Menu is being scouted in the background. Check back in a moment!',
-                };
-            }
-
-            // 6. Cache in Redis (per-spot 1hr + chain-level 6hr)
-            await cacheMenu(spotId, menu);
-            await cacheChainMenu(spot.name, menu);
-
-            // 7. Persist to Supabase
-            const { error: upsertError } = await supabase
-                .from('menus')
-                .upsert({
-                    spot_id: spotId,
-                    sections: menu.sections,
-                    source: menu.source,
-                    has_wings: menu.has_wings,
-                    wing_section_index: menu.wing_section_index,
-                    fetched_at: menu.fetched_at,
-                }, { onConflict: 'spot_id' });
-
-            if (upsertError) {
-                console.error('Failed to persist menu to Supabase:', upsertError);
-                // Continue anyway - we have the menu cached
-            }
-
-            return {
-                success: true,
-                menu,
+        // 5. If this is a POLL request, just check if scouting is still running
+        //    Poll requests NEVER trigger new scrapes — only cache checks above
+        if (isPoll) {
+            const scouting = await isScoutingInProgress(spotId);
+            return NextResponse.json<MenuResponse>({
+                success: false,
+                menu: null,
                 cached: false,
-                message: `Menu fetched from ${menu.source}`,
-            };
-        })();
-
-        inFlightRequests.set(inFlightKey, fetchPromise);
-
-        try {
-            const result = await fetchPromise;
-            return NextResponse.json<MenuResponse>(result);
-        } finally {
-            inFlightRequests.delete(inFlightKey);
+                scouting,
+                message: scouting
+                    ? 'Still scouting wing items...'
+                    : 'Menu not available. Try again.',
+                source_url: sourceUrl,
+            });
         }
+
+        // 6. Initial request — acquire Redis scouting lock (atomic SET NX)
+        const gotLock = await setScoutingLock(spotId);
+        if (!gotLock) {
+            // Another Railway instance is already scraping this spot
+            console.log(`Scouting lock already held for ${spotId}`);
+            return NextResponse.json<MenuResponse>({
+                success: false,
+                menu: null,
+                cached: false,
+                scouting: true,
+                message: 'Menu is being scouted. Check back in a moment!',
+                source_url: sourceUrl,
+            });
+        }
+
+        // 7. Launch background scrape (fire-and-forget) and return immediately
+        //    This responds in <500ms instead of blocking for 45-120s
+        console.log(`Launching background wing scrape for ${spotId}: ${spot.name}`);
+        startBackgroundMenuScrape(spotId, spot.name, spot.address, spot.platform_ids);
+
+        return NextResponse.json<MenuResponse>({
+            success: false,
+            menu: null,
+            cached: false,
+            scouting: true,
+            message: 'Scouting wing items from the menu...',
+            source_url: sourceUrl,
+        });
     } catch (error) {
         console.error('Menu API error:', error);
         return NextResponse.json<MenuResponse>(
