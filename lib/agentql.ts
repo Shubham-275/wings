@@ -322,7 +322,7 @@ function processRestaurants(
             opens_during_game: true,
             hours_today: restaurant.hours || '11AM - 11PM',
             phone: restaurant.phone || null,
-            image_url: restaurant.image_url || null,
+            image_url: restaurant.image_url && restaurant.image_url.startsWith('http') ? restaurant.image_url : null,
             source: restaurant.source,
             zip_code: zipCode,
             last_updated: new Date().toISOString(),

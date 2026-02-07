@@ -527,6 +527,49 @@ function detectDeal(name: string, description?: string): boolean {
     return dealKeywords.some(kw => text.includes(kw));
 }
 
+/**
+ * Get the cheapest price per wing from menu sections.
+ * Scans all wing items across all sections for the lowest price_per_wing.
+ * Also considers raw item prices for items with "wing" in the name but no quantity.
+ */
+export function getCheapestWingPrice(sections: MenuSection[]): number | null {
+    const WING_KEYWORDS = ['wing', 'wings', 'buffalo', 'boneless', 'drumette'];
+    let cheapest: number | null = null;
+
+    for (const section of sections) {
+        for (const item of section.items) {
+            // Check price_per_wing if available
+            if (item.price_per_wing && item.price_per_wing > 0) {
+                if (cheapest === null || item.price_per_wing < cheapest) {
+                    cheapest = item.price_per_wing;
+                }
+            }
+            // Fallback: if item is a wing item with a reasonable price but no per-wing calc,
+            // use the raw price as an approximation (e.g., "6 Wings $8.99" → ~$1.50/wing)
+            else if (item.price && item.price > 0 && item.price < 50) {
+                const text = (item.name + ' ' + (item.description || '')).toLowerCase();
+                if (WING_KEYWORDS.some(kw => text.includes(kw))) {
+                    // Try to extract quantity from name
+                    const match = item.name.match(/(\d+)\s*(pc|piece|wing|ct|count|pk)/i);
+                    if (match) {
+                        const qty = parseInt(match[1]);
+                        if (qty > 0) {
+                            const ppw = Math.round((item.price / qty) * 100) / 100;
+                            if (ppw > 0 && ppw < 10) { // sanity check
+                                if (cheapest === null || ppw < cheapest) {
+                                    cheapest = ppw;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return cheapest;
+}
+
 // ===========================================
 // Background Menu Scraping
 // ===========================================
@@ -579,6 +622,16 @@ export function startBackgroundMenuScrape(
                         wing_section_index: menu.wing_section_index,
                         fetched_at: menu.fetched_at,
                     }, { onConflict: 'spot_id' });
+
+                // Extract cheapest wing price and update the wing_spots table
+                const cheapestPrice = getCheapestWingPrice(sections);
+                if (cheapestPrice !== null) {
+                    await supabase
+                        .from('wing_spots')
+                        .update({ price_per_wing: cheapestPrice })
+                        .eq('id', spotId);
+                    console.log(`Background scrape: Updated price_per_wing=$${cheapestPrice.toFixed(2)} for ${spotId}`);
+                }
             } catch (dbErr) {
                 console.error('Background scrape: Supabase persist error:', dbErr);
             }

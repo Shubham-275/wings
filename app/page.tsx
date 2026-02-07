@@ -9,6 +9,8 @@ import { CommandJumbotron } from '@/components/CommandJumbotron';
 import { CoachHero } from '@/components/CoachHero';
 import { TrashTalkTicker } from '@/components/TrashTalkTicker';
 import { TradingCardGrid } from '@/components/TradingCardGrid';
+import { CompareBar } from '@/components/CompareBar';
+import { CompareModal } from '@/components/CompareModal';
 import { FlavorPersona, ScoutResponse, AvailabilityStats } from '@/lib/types';
 import { calculateAvailability } from '@/lib/utils';
 
@@ -113,6 +115,24 @@ function WingCommandContent() {
     const [flavor, setFlavor] = useState<FlavorPersona | null>(null);
     const [isHydrated, setIsHydrated] = useState(false);
     const [bannerDone, setBannerDone] = useState(false);
+    const [compareIds, setCompareIds] = useState<Set<string>>(new Set());
+    const [isCompareOpen, setIsCompareOpen] = useState(false);
+
+    const toggleCompare = useCallback((id: string) => {
+        setCompareIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else if (next.size < 4) {
+                next.add(id);
+            }
+            return next;
+        });
+    }, []);
+
+    const clearCompare = useCallback(() => {
+        setCompareIds(new Set());
+    }, []);
     useEffect(() => {
         const savedZip = sessionStorage.getItem(LAST_ZIP_KEY);
         const savedFlavor = sessionStorage.getItem(LAST_FLAVOR_KEY) as FlavorPersona | null;
@@ -121,7 +141,7 @@ function WingCommandContent() {
         setIsHydrated(true);
     }, []);
 
-    const { data, isLoading, isFetching } = useQuery<ScoutResponse>({
+    const { data, isLoading, isFetching, refetch } = useQuery<ScoutResponse>({
         queryKey: ['scout', zipCode, flavor],
         queryFn: async ({ signal }) => {
             if (!zipCode || !flavor) return { success: true, spots: [], cached: false, message: '' };
@@ -155,6 +175,20 @@ function WingCommandContent() {
         // Scraping can take up to 3 mins — don't kill stale queries early
         staleTime: CACHE_DURATION_MS,
     });
+
+    // After a fresh (non-cached) load, re-fetch once after 60s to pick up
+    // price_per_wing values from background menu scrapes
+    useEffect(() => {
+        if (data && !data.cached && data.spots.length > 0) {
+            const hasMissingPrices = data.spots.some(s => s.price_per_wing === null);
+            if (hasMissingPrices) {
+                const timer = setTimeout(() => {
+                    refetch();
+                }, 60_000);
+                return () => clearTimeout(timer);
+            }
+        }
+    }, [data, refetch]);
 
     const spots = data?.spots || [];
     const stats = calculateAvailability(spots);
@@ -257,6 +291,8 @@ function WingCommandContent() {
                                 <TradingCardGrid
                                     spots={spots}
                                     isLoading={isSearching && spots.length === 0}
+                                    compareIds={compareIds}
+                                    onToggleCompare={toggleCompare}
                                 />
 
                                 {!isSearching && spots.length === 0 && data?.message && (
@@ -291,6 +327,18 @@ function WingCommandContent() {
                         </p>
                     </div>
                 </footer>
+
+                {/* ===== Compare Mode ===== */}
+                <CompareBar
+                    count={compareIds.size}
+                    onCompare={() => setIsCompareOpen(true)}
+                    onClear={clearCompare}
+                />
+                <CompareModal
+                    spots={spots.filter(s => compareIds.has(s.id))}
+                    isOpen={isCompareOpen}
+                    onClose={() => setIsCompareOpen(false)}
+                />
             </div>
         </GlassBlitzEntrance>
     );

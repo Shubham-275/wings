@@ -8,6 +8,8 @@ import { ScoutingReportCard } from '@/components/ScoutingReportCard';
 interface TradingCardGridProps {
     spots: WingSpot[];
     isLoading: boolean;
+    compareIds?: Set<string>;
+    onToggleCompare?: (id: string) => void;
 }
 
 // ===========================================
@@ -93,7 +95,7 @@ function findBestDealIndex(spots: WingSpot[]): number {
 // ===========================================
 // Main Grid Component
 // ===========================================
-export function TradingCardGrid({ spots, isLoading }: TradingCardGridProps) {
+export function TradingCardGrid({ spots, isLoading, compareIds, onToggleCompare }: TradingCardGridProps) {
     if (isLoading) {
         return (
             <div>
@@ -167,6 +169,8 @@ export function TradingCardGrid({ spots, isLoading }: TradingCardGridProps) {
                                 spot={spot}
                                 index={index}
                                 isBestDeal={index === bestDealIdx}
+                                isCompareSelected={compareIds?.has(spot.id)}
+                                onToggleCompare={onToggleCompare ? () => onToggleCompare(spot.id) : undefined}
                             />
                         </motion.div>
                     );

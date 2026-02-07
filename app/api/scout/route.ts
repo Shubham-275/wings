@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient, getWingSpotsByZip, upsertWingSpots, deleteWingSpotsByZip } from '@/lib/supabase';
-import { getCachedWingSpots, cacheWingSpots, checkRateLimit, getCachedScrapeResult, cacheScrapeResult, purgeZipCache } from '@/lib/cache';
+import { getCachedWingSpots, cacheWingSpots, checkRateLimit, getCachedScrapeResult, cacheScrapeResult, purgeZipCache, setScoutingLock, getCachedMenu } from '@/lib/cache';
 import { geocodeZipCode } from '@/lib/geocode';
 import { scrapeAllSources } from '@/lib/agentql';
 import { generateSeedData } from '@/lib/seed-data';
 import { isValidZipCode, cleanZipCode, calculateAvailability } from '@/lib/utils';
-import { ScoutResponse, FlavorPersona } from '@/lib/types';
+import { startBackgroundMenuScrape, getCheapestWingPrice } from '@/lib/menu';
+import { ScoutResponse, FlavorPersona, WingSpot } from '@/lib/types';
 
 // Render.com: No timeout limit for Web Services (unlimited runtime)
 // Setting Node.js runtime explicitly
@@ -29,6 +30,56 @@ function cleanupInFlightRequests() {
 }
 
 const VALID_FLAVORS: FlavorPersona[] = ['face-melter', 'classicist', 'sticky-finger'];
+const MAX_AUTO_SCRAPES = 5; // Limit auto-triggered menu scrapes to conserve Mino API calls
+
+/**
+ * Enrich spots with cached wing prices from Redis menu cache.
+ * For spots where price_per_wing is null, check if a menu has been cached
+ * and extract the cheapest wing price.
+ */
+async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
+    const enriched = [...spots];
+    const promises = enriched.map(async (spot, idx) => {
+        if (spot.price_per_wing !== null) return; // Already has a price
+        try {
+            const cachedMenu = await getCachedMenu(spot.id);
+            if (cachedMenu?.sections) {
+                const price = getCheapestWingPrice(cachedMenu.sections);
+                if (price !== null) {
+                    enriched[idx] = { ...spot, price_per_wing: price };
+                }
+            }
+        } catch {
+            // Ignore cache errors during enrichment
+        }
+    });
+    await Promise.all(promises);
+    return enriched;
+}
+
+/**
+ * Fire-and-forget: trigger background menu scrapes for top spots with platform URLs.
+ * Uses Redis SET NX lock to prevent duplicates.
+ */
+function autoTriggerMenuScrapes(spots: WingSpot[]): void {
+    const eligible = spots
+        .filter(s => s.platform_ids?.source_url && s.status !== 'red')
+        .slice(0, MAX_AUTO_SCRAPES);
+
+    for (const spot of eligible) {
+        (async () => {
+            try {
+                const gotLock = await setScoutingLock(spot.id);
+                if (gotLock) {
+                    console.log(`Auto-triggering menu scrape for ${spot.id}: ${spot.name}`);
+                    startBackgroundMenuScrape(spot.id, spot.name, spot.address, spot.platform_ids);
+                }
+            } catch {
+                // Ignore lock/scrape errors — non-critical
+            }
+        })();
+    }
+}
 
 export async function GET(request: NextRequest) {
     const t0 = Date.now();
@@ -91,8 +142,10 @@ export async function GET(request: NextRequest) {
             const cachedResult = await getCachedScrapeResult(zipCode);
             if (cachedResult) {
                 log(`HIT scrapeResult cache: ${cachedResult.spots.length} spots`);
+                const enrichedSpots = await enrichSpotsWithPrices(cachedResult.spots);
                 return NextResponse.json<ScoutResponse>({
                     ...cachedResult,
+                    spots: enrichedSpots,
                     cached: true,
                     flavor,
                     message: `Cached data (${cachedResult.spots.length} spots)`,
@@ -104,10 +157,11 @@ export async function GET(request: NextRequest) {
             const cachedSpots = await getCachedWingSpots(zipCode);
             if (cachedSpots && cachedSpots.length > 0) {
                 log(`HIT wingSpots cache: ${cachedSpots.length} spots`);
-                const stats = calculateAvailability(cachedSpots);
+                const enrichedSpots = await enrichSpotsWithPrices(cachedSpots);
+                const stats = calculateAvailability(enrichedSpots);
                 return NextResponse.json<ScoutResponse>({
                     success: true,
-                    spots: cachedSpots,
+                    spots: enrichedSpots,
                     cached: true,
                     flavor,
                     message: `Cached ${cachedSpots.length} spots (${stats.percentage}% available)`,
@@ -130,14 +184,15 @@ export async function GET(request: NextRequest) {
             log(`Supabase data age: ${ageMinutes.toFixed(1)} min`);
 
             if (ageMinutes < 60) { // 1 hour — restaurant data (hours, menu, location) doesn't change fast
-                await cacheWingSpots(zipCode, dbSpots);
-                const stats = calculateAvailability(dbSpots);
+                const enrichedDbSpots = await enrichSpotsWithPrices(dbSpots);
+                await cacheWingSpots(zipCode, enrichedDbSpots);
+                const stats = calculateAvailability(enrichedDbSpots);
                 return NextResponse.json<ScoutResponse>({
                     success: true,
-                    spots: dbSpots,
+                    spots: enrichedDbSpots,
                     cached: true,
                     flavor,
-                    message: `Fresh data: ${dbSpots.length} spots (${stats.percentage}% available)`,
+                    message: `Fresh data: ${enrichedDbSpots.length} spots (${stats.percentage}% available)`,
                 });
             }
         }
@@ -213,6 +268,12 @@ export async function GET(request: NextRequest) {
 
         await cacheScrapeResult(zipCode, result);
         log(`DONE: ${scrapedSpots.length} spots in ${Date.now() - t0}ms`);
+
+        // 7. Auto-trigger background menu scrapes for top spots with platform URLs
+        // This populates price_per_wing data without the user needing to open menus
+        autoTriggerMenuScrapes(scrapedSpots);
+        log(`Auto-triggered menu scrapes for up to ${MAX_AUTO_SCRAPES} spots`);
+
         return NextResponse.json<ScoutResponse>(result);
 
     } catch (error) {

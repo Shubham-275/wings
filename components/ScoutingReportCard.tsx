@@ -11,7 +11,8 @@ import {
     formatRelativeTime,
     formatDeliveryTime,
     getGoogleMapsUrl,
-    getOrderSearchUrl,
+    getOrderUrl,
+    getPlatformLabel,
     getTelLink,
     cn,
 } from '@/lib/utils';
@@ -123,9 +124,11 @@ interface ScoutingReportCardProps {
     spot: WingSpot;
     index: number;
     isBestDeal: boolean;
+    isCompareSelected?: boolean;
+    onToggleCompare?: () => void;
 }
 
-export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCardProps) {
+export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected, onToggleCompare }: ScoutingReportCardProps) {
     const [isHovered, setIsHovered] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const cardRef = useRef<HTMLDivElement>(null);
@@ -158,6 +161,7 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
             className={cn(
                 'report-card group relative',
                 isBestDeal && 'perfect-play-glow',
+                isCompareSelected && 'ring-2 ring-stadium-green ring-offset-2 ring-offset-transparent',
             )}
             initial={{ opacity: 0, y: 40, rotateZ: -1 + Math.random() * 2 }}
             animate={{ opacity: 1, y: 0, rotateZ: 0 }}
@@ -169,6 +173,26 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
             onMouseEnter={() => setIsHovered(true)}
             onMouseLeave={() => setIsHovered(false)}
         >
+            {/* ===== Compare Checkbox ===== */}
+            {onToggleCompare && (
+                <button
+                    onClick={(e) => { e.stopPropagation(); onToggleCompare(); }}
+                    className={cn(
+                        'absolute top-2 left-2 z-20 w-5 h-5 rounded border-2 flex items-center justify-center transition-all',
+                        isCompareSelected
+                            ? 'bg-stadium-green border-stadium-green text-white'
+                            : 'border-gray-300 bg-white/80 opacity-0 group-hover:opacity-100 hover:border-stadium-green',
+                    )}
+                    title={isCompareSelected ? 'Remove from compare' : 'Add to compare'}
+                >
+                    {isCompareSelected && (
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                    )}
+                </button>
+            )}
+
             {/* ===== Folder Tab ===== */}
             <div
                 className="report-tab"
@@ -198,7 +222,7 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
                     <div className="shrink-0">
                         <div className="polaroid w-[90px] md:w-[100px]">
                             <div className="relative w-full aspect-square overflow-hidden bg-gray-100">
-                                {spot.image_url ? (
+                                {spot.image_url && spot.image_url.startsWith('http') ? (
                                     <img
                                         src={spot.image_url}
                                         alt={spot.name}
@@ -339,11 +363,11 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
                             <Truck className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
                         </a>
                         <a
-                            href={getOrderSearchUrl(spot.name, spot.address)}
+                            href={getOrderUrl(spot)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"
-                            title="Order Online"
+                            title={getPlatformLabel(getOrderUrl(spot))}
                         >
                             <ExternalLink className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
                         </a>

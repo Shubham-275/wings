@@ -249,6 +249,25 @@ export function getTelLink(phone: string): string {
     return `tel:+1${phone.replace(/\D/g, '')}`;
 }
 
+/**
+ * Get the best order URL for a spot — prefers platform URL over Google search
+ */
+export function getOrderUrl(spot: WingSpot): string {
+    if (spot.platform_ids?.source_url) return spot.platform_ids.source_url;
+    return getOrderSearchUrl(spot.name, spot.address);
+}
+
+/**
+ * Get human-readable platform label from a URL
+ */
+export function getPlatformLabel(url: string): string {
+    if (url.includes('doordash')) return 'DoorDash';
+    if (url.includes('ubereats')) return 'Uber Eats';
+    if (url.includes('grubhub')) return 'Grubhub';
+    if (url.includes('google.com/search')) return 'Order Online';
+    return 'Order Online';
+}
+
 export function randomDelay(minMs = 2000, maxMs = 5000): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, Math.random() * (maxMs - minMs) + minMs));
 }
