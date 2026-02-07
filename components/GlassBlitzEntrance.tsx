@@ -184,35 +184,39 @@ export function GlassBlitzEntrance({
     const [phase, setPhase] = useState<'glass' | 'shattering' | 'done'>('glass');
     const [hitCount, setHitCount] = useState(0);
 
-    const shards = useMemo(() => generateShards(10, 10), []);
+    // Mobile detection — reduce animation complexity to prevent Safari crashes
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+    const shards = useMemo(() => generateShards(isMobile ? 4 : 8, isMobile ? 4 : 8), [isMobile]);
 
     const handleClick = useCallback(() => {
         if (phase !== 'glass') return;
         const newHits = hitCount + 1;
         setHitCount(newHits);
 
-        // Screen shake
-        const body = document.body;
-        const intensity = newHits * 3;
-        body.style.transition = 'none';
-        const frames = [
-            `translate(${4 + intensity}px, ${-(3 + intensity)}px)`,
-            `translate(${-(5 + intensity)}px, ${4 + intensity}px)`,
-            `translate(${3 + intensity}px, ${-(2 + intensity)}px)`,
-            '',
-        ];
-        let i = 0;
-        const iv = setInterval(() => {
-            body.style.transform = frames[i] || '';
-            i++;
-            if (i >= frames.length) { clearInterval(iv); body.style.transition = ''; }
-        }, 35);
+        // Screen shake — skip on mobile (causes layout thrashing in Safari)
+        if (!isMobile) {
+            const body = document.body;
+            const intensity = newHits * 3;
+            body.style.transition = 'none';
+            const frames = [
+                `translate(${4 + intensity}px, ${-(3 + intensity)}px)`,
+                `translate(${-(5 + intensity)}px, ${4 + intensity}px)`,
+                `translate(${3 + intensity}px, ${-(2 + intensity)}px)`,
+                '',
+            ];
+            let i = 0;
+            const iv = setInterval(() => {
+                body.style.transform = frames[i] || '';
+                i++;
+                if (i >= frames.length) { clearInterval(iv); body.style.transition = ''; }
+            }, 35);
+        }
 
         if (newHits >= HITS_TO_SHATTER) {
             setPhase('shattering');
             setTimeout(() => { setPhase('done'); onComplete?.(); }, 900);
         }
-    }, [phase, hitCount, onComplete]);
+    }, [phase, hitCount, onComplete, isMobile]);
 
     const hitsRemaining = HITS_TO_SHATTER - hitCount;
 
@@ -225,46 +229,28 @@ export function GlassBlitzEntrance({
         );
     }
 
-    // ===== SHATTERING — 100 shards flying out =====
+    // ===== SHATTERING — shards flying out =====
+    // Mobile: 16 lightweight gradient shards (no img/overlays) to prevent Safari crash
+    // Desktop: 64 gradient shards with 3D perspective for dramatic effect
     if (phase === 'shattering') {
         return (
-            <div className="fixed inset-0 z-50 overflow-hidden" style={{ perspective: '1200px' }}>
+            <div className="fixed inset-0 z-50 overflow-hidden"
+                 style={isMobile ? undefined : { perspective: '1200px' }}>
                 {shards.map((shard) => (
                     <motion.div
                         key={shard.id}
                         className="absolute inset-0"
-                        style={{ clipPath: shard.clipPath }}
+                        style={{
+                            clipPath: shard.clipPath,
+                            background: 'linear-gradient(135deg, rgba(15,23,42,0.85), rgba(22,101,52,0.4))',
+                        }}
                         initial={{ x: 0, y: 0, opacity: 1, rotate: 0, scale: 1 }}
                         animate={{
                             x: shard.exitX, y: shard.exitY, opacity: 0,
                             rotate: shard.exitRotate, scale: shard.exitScale,
                         }}
                         transition={{ duration: 0.7, delay: shard.delay, ease: [0.36, 0, 0.66, -0.56] }}
-                    >
-                        {/* Each shard shows the full hero scene — clip-path cuts it */}
-                        <div className="w-full h-full relative">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                                src={heroImage}
-                                alt=""
-                                className="absolute inset-0 w-full h-full object-cover"
-                                style={{ objectPosition: 'center 40%' }}
-                            />
-                            <div className="absolute inset-0" style={{
-                                background: 'linear-gradient(180deg, rgba(15,23,42,0.35) 0%, rgba(22,101,52,0.2) 40%, rgba(15,23,42,0.45) 100%)',
-                            }} />
-                            <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                <h1 className="font-heading text-5xl md:text-7xl lg:text-8xl tracking-[0.08em] text-white text-center drop-shadow-lg"
-                                    style={{ textShadow: '0 4px 30px rgba(0,0,0,0.8), 0 0 80px rgba(22,163,74,0.5)' }}>
-                                    {text}
-                                </h1>
-                                <p className="text-whistle-orange text-xl md:text-3xl tracking-[0.3em] font-heading text-center drop-shadow-lg mt-2"
-                                    style={{ textShadow: '0 2px 20px rgba(0,0,0,0.7), 0 0 40px rgba(249,115,22,0.5)' }}>
-                                    {subtext}
-                                </p>
-                            </div>
-                        </div>
-                    </motion.div>
+                    />
                 ))}
             </div>
         );
