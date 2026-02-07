@@ -2,8 +2,9 @@
 
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, MapPin, Phone, ExternalLink, Truck, DollarSign } from 'lucide-react';
+import { Clock, MapPin, Phone, ExternalLink, Truck, DollarSign, UtensilsCrossed } from 'lucide-react';
 import { WingSpot } from '@/lib/types';
+import { MenuModal } from './MenuModal';
 import {
     getStatusColorClass,
     getStatusEmoji,
@@ -126,6 +127,7 @@ interface ScoutingReportCardProps {
 
 export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCardProps) {
     const [isHovered, setIsHovered] = useState(false);
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
     const cardRef = useRef<HTMLDivElement>(null);
 
     const draftGrade = calculateDraftGrade(spot);
@@ -150,6 +152,7 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
     };
 
     return (
+    <>
         <motion.div
             ref={cardRef}
             className={cn(
@@ -310,6 +313,13 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
                     </div>
 
                     <div className="flex items-center gap-0.5">
+                        <button
+                            onClick={() => setIsMenuOpen(true)}
+                            className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"
+                            title="View Menu"
+                        >
+                            <UtensilsCrossed className="w-3.5 h-3.5 text-gray-400 hover:text-stadium-green transition-colors" />
+                        </button>
                         {spot.phone && (
                             <a
                                 href={getTelLink(spot.phone)}
@@ -378,5 +388,9 @@ export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCa
                 )}
             </AnimatePresence>
         </motion.div>
+
+        {/* ===== Menu Modal ===== */}
+        <MenuModal spot={spot} isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
+    </>
     );
 }

@@ -1,0 +1,261 @@
+'use client';
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { X, Loader2 } from 'lucide-react';
+import { WingSpot, MenuResponse, MenuSection, MenuItem } from '@/lib/types';
+
+interface MenuModalProps {
+    spot: WingSpot;
+    isOpen: boolean;
+    onClose: () => void;
+}
+
+const WING_KEYWORDS = ['wing', 'wings', 'buffalo', 'boneless', 'drumette'];
+
+function isWingItem(item: MenuItem): boolean {
+    const text = (item.name + ' ' + (item.description || '')).toLowerCase();
+    return WING_KEYWORDS.some(kw => text.includes(kw));
+}
+
+function isWingSection(section: MenuSection): boolean {
+    return WING_KEYWORDS.some(kw => section.name.toLowerCase().includes(kw));
+}
+
+function formatPrice(price: number | null): string {
+    if (price === null || price === undefined) return '';
+    return `$${price.toFixed(2)}`;
+}
+
+// Loading skeleton for menu items
+function MenuSkeleton() {
+    return (
+        <div className="space-y-6 animate-pulse">
+            {[1, 2, 3].map(i => (
+                <div key={i}>
+                    <div className="h-5 w-32 bg-amber-200/30 rounded mb-3" />
+                    <div className="space-y-2.5">
+                        {[1, 2, 3].map(j => (
+                            <div key={j} className="flex justify-between items-center">
+                                <div className="h-4 w-48 bg-amber-200/20 rounded" />
+                                <div className="h-4 w-14 bg-amber-200/20 rounded" />
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ))}
+            <p className="text-xs text-center text-amber-700/50 pt-2">
+                Scouting the menu via Google Maps...
+            </p>
+        </div>
+    );
+}
+
+// Single menu item row
+function MenuItemRow({ item, highlight }: { item: MenuItem; highlight: boolean }) {
+    return (
+        <div className={`flex items-start justify-between gap-3 py-1.5 px-2 rounded ${highlight ? 'bg-stadium-green/10' : ''}`}>
+            <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                    {highlight && <span className="text-xs shrink-0">🍗</span>}
+                    <span className={`text-sm leading-tight ${highlight ? 'font-semibold text-amber-900' : 'text-amber-800'}`}>
+                        {item.name}
+                    </span>
+                    {item.is_deal && (
+                        <span className="text-xs bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-semibold shrink-0">
+                            DEAL
+                        </span>
+                    )}
+                </div>
+                {item.description && (
+                    <p className="text-xs text-amber-600/70 mt-0.5 line-clamp-2">{item.description}</p>
+                )}
+                {item.price_per_wing && (
+                    <p className="text-[10px] text-stadium-green font-semibold mt-0.5">
+                        ~{formatPrice(item.price_per_wing)}/wing
+                    </p>
+                )}
+            </div>
+            {item.price !== null && item.price !== undefined && (
+                <span className="text-sm font-mono font-semibold text-amber-900 shrink-0">
+                    {formatPrice(item.price)}
+                </span>
+            )}
+        </div>
+    );
+}
+
+// Section of menu items
+function MenuSectionBlock({ section, isWing }: { section: MenuSection; isWing: boolean }) {
+    return (
+        <div className={`rounded-lg ${isWing ? 'bg-stadium-green/5 border border-stadium-green/20' : 'border border-amber-200/30'} p-3`}>
+            <h3 className={`font-heading text-sm uppercase tracking-wider mb-2 ${isWing ? 'text-stadium-green' : 'text-amber-700'}`}>
+                {isWing && '🍗 '}{section.name}
+            </h3>
+            <div className="space-y-0.5">
+                {section.items.map((item, idx) => (
+                    <MenuItemRow key={idx} item={item} highlight={isWingItem(item)} />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
+    const [menu, setMenu] = useState<MenuResponse | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const fetchMenu = useCallback(async () => {
+        if (!spot.id) return;
+        setLoading(true);
+        setError(null);
+
+        try {
+            const res = await fetch(`/api/menu?spot_id=${encodeURIComponent(spot.id)}`);
+            const data: MenuResponse = await res.json();
+
+            if (data.success && data.menu) {
+                setMenu(data);
+            } else {
+                setError(data.message || 'Menu not available');
+            }
+        } catch {
+            setError('Failed to load menu. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    }, [spot.id]);
+
+    // Fetch menu when modal opens
+    useEffect(() => {
+        if (isOpen && !menu && !loading) {
+            fetchMenu();
+        }
+    }, [isOpen, menu, loading, fetchMenu]);
+
+    // Handle escape key
+    useEffect(() => {
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') onClose();
+        };
+        if (isOpen) {
+            document.addEventListener('keydown', handleEscape);
+            document.body.style.overflow = 'hidden';
+        }
+        return () => {
+            document.removeEventListener('keydown', handleEscape);
+            document.body.style.overflow = '';
+        };
+    }, [isOpen, onClose]);
+
+    if (!isOpen) return null;
+
+    // Sort sections: wing sections first
+    const sortedSections = menu?.menu?.sections
+        ? [...menu.menu.sections].sort((a, b) => {
+            const aWing = isWingSection(a) ? 0 : 1;
+            const bWing = isWingSection(b) ? 0 : 1;
+            return aWing - bWing;
+        })
+        : [];
+
+    return (
+        <AnimatePresence>
+            {isOpen && (
+                <>
+                    {/* Backdrop */}
+                    <motion.div
+                        className="fixed inset-0 bg-black/60 z-[60]"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={onClose}
+                    />
+
+                    {/* Modal */}
+                    <motion.div
+                        className="fixed inset-x-4 top-[10%] bottom-[10%] md:inset-x-auto md:left-1/2 md:top-[5%] md:bottom-[5%] md:w-[480px] md:-translate-x-1/2 z-[61] flex flex-col"
+                        initial={{ opacity: 0, y: 40, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 40, scale: 0.95 }}
+                        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                    >
+                        <div className="flex flex-col h-full bg-manila rounded-xl shadow-2xl border border-amber-300/40 overflow-hidden">
+                            {/* Header */}
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-amber-300/40 bg-amber-50/50 shrink-0">
+                                <div className="min-w-0 flex-1">
+                                    <h2 className="font-heading text-lg text-varsity-navy truncate">
+                                        {spot.name}
+                                    </h2>
+                                    <p className="text-[10px] text-amber-600 uppercase tracking-widest font-heading">
+                                        Scouting Report Menu
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={onClose}
+                                    className="p-1.5 rounded-lg hover:bg-amber-200/50 transition-colors shrink-0 ml-2"
+                                >
+                                    <X className="w-5 h-5 text-amber-700" />
+                                </button>
+                            </div>
+
+                            {/* Content */}
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                                {loading && <MenuSkeleton />}
+
+                                {error && !loading && (
+                                    <div className="text-center py-8">
+                                        <div className="text-4xl mb-3">📋</div>
+                                        <p className="text-amber-700 font-heading text-sm mb-2">
+                                            Menu Not Available
+                                        </p>
+                                        <p className="text-xs text-amber-600/60 mb-4">
+                                            {error}
+                                        </p>
+                                        <button
+                                            onClick={fetchMenu}
+                                            className="text-xs px-4 py-2 bg-stadium-green text-white rounded-lg hover:bg-stadium-green/90 transition-colors font-heading"
+                                        >
+                                            Try Again
+                                        </button>
+                                    </div>
+                                )}
+
+                                {!loading && !error && menu?.menu && (
+                                    <>
+                                        {sortedSections.length === 0 ? (
+                                            <div className="text-center py-8">
+                                                <div className="text-4xl mb-3">📋</div>
+                                                <p className="text-amber-700 font-heading text-sm">
+                                                    No menu items found
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                {sortedSections.map((section, idx) => (
+                                                    <MenuSectionBlock
+                                                        key={idx}
+                                                        section={section}
+                                                        isWing={isWingSection(section)}
+                                                    />
+                                                ))}
+
+                                                {/* Footer info */}
+                                                <div className="text-center pt-2 pb-1">
+                                                    <p className="text-[10px] text-amber-500">
+                                                        {menu.cached ? 'Cached menu' : 'Freshly scouted'} via {menu.menu.source === 'mino_scrape' ? 'AI scraping' : menu.menu.source}
+                                                    </p>
+                                                </div>
+                                            </>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </motion.div>
+                </>
+            )}
+        </AnimatePresence>
+    );
+}
