@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Loader2 } from 'lucide-react';
+import { X } from 'lucide-react';
 import { WingSpot, MenuResponse, MenuSection, MenuItem } from '@/lib/types';
 
 interface MenuModalProps {
@@ -105,8 +105,9 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
     const [menu, setMenu] = useState<MenuResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const hasFetched = useRef(false);
 
-    const fetchMenu = useCallback(async () => {
+    async function doFetchMenu() {
         if (!spot.id) return;
         setLoading(true);
         setError(null);
@@ -125,14 +126,20 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
         } finally {
             setLoading(false);
         }
-    }, [spot.id]);
+    }
 
-    // Fetch menu when modal opens
+    // Fetch menu ONCE when modal opens — ref prevents re-trigger loops
     useEffect(() => {
-        if (isOpen && !menu && !loading) {
-            fetchMenu();
+        if (isOpen && !hasFetched.current) {
+            hasFetched.current = true;
+            doFetchMenu();
         }
-    }, [isOpen, menu, loading, fetchMenu]);
+        if (!isOpen) {
+            // Reset for next open
+            hasFetched.current = false;
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     // Handle escape key
     useEffect(() => {
@@ -214,7 +221,7 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                                             {error}
                                         </p>
                                         <button
-                                            onClick={fetchMenu}
+                                            onClick={doFetchMenu}
                                             className="text-xs px-4 py-2 bg-stadium-green text-white rounded-lg hover:bg-stadium-green/90 transition-colors font-heading"
                                         >
                                             Try Again
