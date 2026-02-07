@@ -161,6 +161,7 @@ export interface MenuResponse {
     menu: Menu | null;
     cached: boolean;
     message: string;
+    scouting?: boolean; // true when menu is being fetched in the background
 }
 
 /**

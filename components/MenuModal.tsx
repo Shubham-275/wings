@@ -105,12 +105,24 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
     const [menu, setMenu] = useState<MenuResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [scouting, setScouting] = useState(false);
     const hasFetched = useRef(false);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // Stop polling when component unmounts or modal closes
+    function stopPolling() {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    }
 
     async function doFetchMenu() {
         if (!spot.id) return;
         setLoading(true);
         setError(null);
+        setScouting(false);
+        stopPolling();
 
         // 50-second client-side timeout — prevents infinite hangs
         const controller = new AbortController();
@@ -126,19 +138,55 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
 
             if (data.success && data.menu) {
                 setMenu(data);
+            } else if (data.scouting) {
+                // Background scrape started — poll every 5s for the cached result
+                setScouting(true);
+                startPolling();
             } else {
                 setError(data.message || 'Menu not available');
             }
         } catch (err) {
             clearTimeout(timeoutId);
             if (err instanceof Error && err.name === 'AbortError') {
-                setError('Menu is taking too long to load. Try again or check the restaurant website directly.');
+                // Client timed out at 50s — server may still be working, start polling
+                setScouting(true);
+                startPolling();
             } else {
                 setError('Failed to load menu. Please try again.');
             }
         } finally {
             setLoading(false);
         }
+    }
+
+    function startPolling() {
+        stopPolling(); // Prevent double polling
+        let pollCount = 0;
+        const maxPolls = 18; // 18 polls x 5s = 90s max polling
+
+        pollRef.current = setInterval(async () => {
+            pollCount++;
+            if (pollCount > maxPolls || !isOpen) {
+                stopPolling();
+                setScouting(false);
+                setError('Menu could not be loaded. Try again later.');
+                return;
+            }
+
+            try {
+                const res = await fetch(`/api/menu?spot_id=${encodeURIComponent(spot.id)}`);
+                const data: MenuResponse = await res.json();
+
+                if (data.success && data.menu) {
+                    stopPolling();
+                    setScouting(false);
+                    setMenu(data);
+                }
+                // If still scouting, keep polling
+            } catch {
+                // Network error during poll — keep trying
+            }
+        }, 5000);
     }
 
     // Fetch menu ONCE when modal opens — ref prevents re-trigger loops
@@ -150,9 +198,16 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
         if (!isOpen) {
             // Reset for next open
             hasFetched.current = false;
+            stopPolling();
+            setScouting(false);
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => stopPolling();
+    }, []);
 
     // Handle escape key
     useEffect(() => {
@@ -224,7 +279,32 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
                             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                                 {loading && <MenuSkeleton />}
 
-                                {error && !loading && (
+                                {scouting && !loading && (
+                                    <div className="text-center py-8">
+                                        <div className="text-4xl mb-3 animate-bounce">🔍</div>
+                                        <p className="text-amber-700 font-heading text-sm mb-2">
+                                            Scouting Menu...
+                                        </p>
+                                        <p className="text-xs text-amber-600/60 mb-4">
+                                            Our scout is reading the menu in the background.
+                                            <br />This usually takes 30-60 seconds.
+                                        </p>
+                                        <div className="flex justify-center gap-1.5 mb-3">
+                                            {[0, 1, 2].map(i => (
+                                                <div
+                                                    key={i}
+                                                    className="w-2 h-2 bg-stadium-green rounded-full animate-pulse"
+                                                    style={{ animationDelay: `${i * 0.3}s` }}
+                                                />
+                                            ))}
+                                        </div>
+                                        <p className="text-[10px] text-amber-500">
+                                            The menu will appear automatically when ready
+                                        </p>
+                                    </div>
+                                )}
+
+                                {error && !loading && !scouting && (
                                     <div className="text-center py-8">
                                         <div className="text-4xl mb-3">📋</div>
                                         <p className="text-amber-700 font-heading text-sm mb-2">

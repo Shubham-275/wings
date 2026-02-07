@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
 import { getCachedMenu, cacheMenu, getCachedChainMenu, cacheChainMenu } from '@/lib/cache';
-import { fetchMenu } from '@/lib/menu';
+import { fetchMenu, startBackgroundMenuScrape } from '@/lib/menu';
 import { MenuResponse, Menu } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -138,11 +138,14 @@ export async function GET(request: NextRequest) {
             );
 
             if (!menu) {
+                // Fast path failed (45s timeout) — launch background scrape with full 120s timeout
+                startBackgroundMenuScrape(spotId, spot.name, spot.address, spot.platform_ids);
                 return {
                     success: false,
                     menu: null,
                     cached: false,
-                    message: 'Could not fetch menu for this restaurant',
+                    scouting: true,
+                    message: 'Menu is being scouted in the background. Check back in a moment!',
                 };
             }
 

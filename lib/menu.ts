@@ -4,7 +4,9 @@
 
 import axios from 'axios';
 import { Menu, MenuSection, MenuItem, PlatformIds } from './types';
-import { executeMinoMenuScrape } from './agentql';
+import { executeMinoMenuScrape, executeMinoScrape } from './agentql';
+import { cacheMenu, cacheChainMenu } from './cache';
+import { createServerClient } from './supabase';
 
 /**
  * Main menu fetching function with fallback chain
@@ -282,5 +284,144 @@ function detectDeal(name: string, description?: string): boolean {
     const dealKeywords = ['deal', 'special', 'combo', 'bundle', 'meal', 'discount', 'off', 'save', 'value'];
     const text = (name + ' ' + (description || '')).toLowerCase();
     return dealKeywords.some(kw => text.includes(kw));
+}
+
+// ===========================================
+// Background Menu Scraping
+// ===========================================
+
+// Track in-flight background scrapes so we don't launch duplicates
+const backgroundScrapes = new Set<string>();
+
+/**
+ * Fire-and-forget background menu scrape.
+ * Uses the full 120s Mino timeout (not the 45s menu timeout).
+ * On success, caches the result in Redis + chain cache + Supabase.
+ * Called when the fast 45s attempt fails — Mino keeps running in background.
+ */
+export function startBackgroundMenuScrape(
+    spotId: string,
+    name: string,
+    address: string,
+    platformIds?: PlatformIds
+): void {
+    // Don't launch duplicate background scrapes
+    if (backgroundScrapes.has(spotId)) {
+        console.log(`Background scrape already running for ${spotId}`);
+        return;
+    }
+
+    backgroundScrapes.add(spotId);
+    console.log(`Starting background menu scrape for ${spotId}: ${name}`);
+
+    // Fire-and-forget — uses the full 120s scraper timeout
+    (async () => {
+        try {
+            // Build the same scrape URL and goal as scrapeMenuWithMino
+            let scrapeUrl: string;
+            let goal: string;
+
+            if (platformIds?.source_url) {
+                scrapeUrl = platformIds.source_url;
+                goal = `Navigate to this restaurant page and extract the full menu.
+If the page has a text-based menu, extract items directly.
+If you see menu images or photos, read the text from the images to extract item names and prices.
+
+Return a JSON object with an array called "sections", where each section has:
+- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
+- items (array of menu items)
+
+Each item should have:
+- name (item name)
+- description (optional description text)
+- price (number only, just the dollar amount without $ symbol)
+
+Focus especially on wing items and chicken dishes. Include all visible menu sections.`;
+            } else {
+                scrapeUrl = `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
+                goal = `Find this restaurant on Google Maps and extract its menu.
+Steps:
+1. Click on the restaurant listing in the search results
+2. Look for a "Menu" tab or section — if found, extract items from it
+3. If no menu tab, check the "Photos" section for menu images — you can read text from images to extract menu items and prices
+4. If you find menu photos, read every item name, description, and price visible in the image
+
+Return a JSON object with an array called "sections", where each section has:
+- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
+- items (array of menu items)
+
+Each item should have:
+- name (item name)
+- description (optional description text)
+- price (number only, just the dollar amount without $ symbol)
+
+Focus especially on wing items and chicken dishes. Include all visible menu sections.`;
+            }
+
+            console.log(`Background Mino scrape: ${scrapeUrl}`);
+            const result = await executeMinoScrape(scrapeUrl, goal); // Full 120s timeout
+
+            if (!result.success || !result.data) {
+                console.log(`Background scrape failed for ${spotId}: ${result.error}`);
+                return;
+            }
+
+            // Parse response (same as scrapeMenuWithMino)
+            let parsed: unknown = result.data;
+            if (typeof parsed === 'string') {
+                try { parsed = JSON.parse(parsed); } catch { return; }
+            }
+
+            const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
+            if (!data.sections || data.sections.length === 0) {
+                console.log(`Background scrape: no sections for ${spotId}`);
+                return;
+            }
+
+            const sections: MenuSection[] = data.sections.map(section => ({
+                name: String(section.name || 'Menu'),
+                items: (section.items || []).map((item: unknown) => {
+                    const itemObj = item as Record<string, unknown>;
+                    return {
+                        name: String(itemObj.name || 'Unknown Item'),
+                        description: itemObj.description ? String(itemObj.description) : undefined,
+                        price: itemObj.price ? parseFloat(String(itemObj.price)) : null,
+                        quantity: itemObj.quantity ? parseInt(String(itemObj.quantity)) : undefined,
+                        price_per_wing: calculatePricePerWing(itemObj.price, itemObj.quantity, String(itemObj.name || '')),
+                        is_deal: detectDeal(String(itemObj.name || ''), String(itemObj.description || '')),
+                    };
+                }),
+            }));
+
+            const menu = buildMenu(spotId, sections, 'mino_scrape');
+
+            // Cache in Redis (per-spot + chain)
+            await cacheMenu(spotId, menu);
+            await cacheChainMenu(name, menu);
+
+            // Persist to Supabase
+            try {
+                const supabase = createServerClient();
+                await supabase
+                    .from('menus')
+                    .upsert({
+                        spot_id: spotId,
+                        sections: menu.sections,
+                        source: menu.source,
+                        has_wings: menu.has_wings,
+                        wing_section_index: menu.wing_section_index,
+                        fetched_at: menu.fetched_at,
+                    }, { onConflict: 'spot_id' });
+            } catch (dbErr) {
+                console.error('Background scrape: Supabase persist error:', dbErr);
+            }
+
+            console.log(`Background scrape SUCCESS for ${spotId}: ${sections.length} sections cached`);
+        } catch (err) {
+            console.error(`Background scrape error for ${spotId}:`, err);
+        } finally {
+            backgroundScrapes.delete(spotId);
+        }
+    })();
 }
 
