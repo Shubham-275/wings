@@ -98,12 +98,13 @@ export async function executeMinoScrape(url: string, goal: string): Promise<Agen
 }
 
 // ===== DOORDASH SCRAPER =====
-export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant[]> {
+export async function scrapeDoorDash(zipCode: string, city?: string, state?: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
+    const locationHint = city && state ? ` in ${city}, ${state}` : '';
 
     try {
         const searchUrl = `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
@@ -135,12 +136,13 @@ export async function scrapeDoorDash(zipCode: string): Promise<ScrapedRestaurant
 }
 
 // ===== UBEREATS SCRAPER =====
-export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant[]> {
+export async function scrapeUberEats(zipCode: string, city?: string, state?: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
+    const locationHint = city && state ? ` in ${city}, ${state}` : '';
 
     try {
         const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings%20near%20${zipCode}`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean), store_url (the UberEats URL path like /store/restaurant-name/uuid). Return as JSON array called "stores".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean), store_url (the UberEats URL path like /store/restaurant-name/uuid). Return as JSON array called "stores".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
@@ -172,12 +174,13 @@ export async function scrapeUberEats(zipCode: string): Promise<ScrapedRestaurant
 }
 
 // ===== GRUBHUB SCRAPER =====
-export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[]> {
+export async function scrapeGrubhub(zipCode: string, city?: string, state?: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
+    const locationHint = city && state ? ` in ${city}, ${state}` : '';
 
     try {
         const searchUrl = `https://www.grubhub.com/search?query=chicken+wings+near+${zipCode}&locationMode=DELIVERY`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean), restaurant_url (the Grubhub URL path like /restaurant/name/12345). Return as JSON array called "restaurants".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean), restaurant_url (the Grubhub URL path like /restaurant/name/12345). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
@@ -209,11 +212,12 @@ export async function scrapeGrubhub(zipCode: string): Promise<ScrapedRestaurant[
 }
 
 // ===== GOOGLE SCRAPER (Hidden Gem Detection) =====
-export async function scrapeGoogle(zipCode: string): Promise<ScrapedRestaurant[]> {
+export async function scrapeGoogle(zipCode: string, city?: string, state?: string): Promise<ScrapedRestaurant[]> {
     const restaurants: ScrapedRestaurant[] = [];
+    const locationQuery = city && state ? `+${city.replace(/\s/g, '+')}+${state}` : '';
 
     try {
-        const searchUrl = `https://www.google.com/search?q=best+chicken+wings+local+sports+bar+${zipCode}`;
+        const searchUrl = `https://www.google.com/search?q=best+chicken+wings+local+sports+bar+${zipCode}${locationQuery}`;
         const goal = `Extract ALL chicken wings restaurants visible on this Google search results page.
 IMPORTANT: Include local establishments like:
 - Family-owned restaurants and pizzerias with wings
@@ -323,21 +327,77 @@ function applyFlavorScoring(spots: WingSpot[], flavorId: FlavorPersona): WingSpo
     }));
 }
 
+// ===== STATE VALIDATION =====
+// Extract a 2-letter state abbreviation from a US address string
+function extractStateFromAddress(address: string): string | null {
+    if (!address) return null;
+    // Match ", CA 90028" or ", NY 10001" pattern
+    const matchWithZip = address.match(/,\s*([A-Z]{2})\s+\d{5}/);
+    if (matchWithZip) return matchWithZip[1];
+    // Match ", CA" at end of string
+    const matchEnd = address.match(/,\s*([A-Z]{2})\s*$/);
+    if (matchEnd) return matchEnd[1];
+    // Match ", California" or ", New York" (full state name → abbreviation)
+    const stateNames: Record<string, string> = {
+        'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+        'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+        'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+        'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+        'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+        'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
+        'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
+        'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+        'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
+        'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+        'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
+        'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+        'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+    };
+    const lower = address.toLowerCase();
+    for (const [name, abbr] of Object.entries(stateNames)) {
+        if (lower.includes(name)) return abbr;
+    }
+    return null;
+}
+
+// Get the state abbreviation for a given state name or abbreviation
+function normalizeStateAbbreviation(state: string): string {
+    if (state.length === 2) return state.toUpperCase();
+    const stateNames: Record<string, string> = {
+        'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+        'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+        'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+        'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+        'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+        'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN', 'mississippi': 'MS',
+        'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE', 'nevada': 'NV',
+        'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+        'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH', 'oklahoma': 'OK',
+        'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI', 'south carolina': 'SC',
+        'south dakota': 'SD', 'tennessee': 'TN', 'texas': 'TX', 'utah': 'UT',
+        'vermont': 'VT', 'virginia': 'VA', 'washington': 'WA', 'west virginia': 'WV',
+        'wisconsin': 'WI', 'wyoming': 'WY', 'district of columbia': 'DC',
+    };
+    return stateNames[state.toLowerCase()] || state.toUpperCase();
+}
+
 // ===== MAIN PARALLEL SCRAPER =====
 export async function scrapeAllSources(
     zipCode: string,
     lat: number,
     lng: number,
-    flavor?: FlavorPersona
+    flavor?: FlavorPersona,
+    city?: string,
+    state?: string,
 ): Promise<WingSpot[]> {
-    console.log(`Starting parallel scrape for zip: ${zipCode}${flavor ? ` (flavor: ${flavor})` : ''}`);
+    console.log(`Starting parallel scrape for zip: ${zipCode}${city ? ` (${city}, ${state})` : ''}${flavor ? ` flavor: ${flavor}` : ''}`);
 
     // Fire all scrapers in parallel with Promise.allSettled
     const results = await Promise.allSettled([
-        withTimeout(scrapeGoogle(zipCode), SCRAPER_TIMEOUT, []),
-        withTimeout(scrapeDoorDash(zipCode), SCRAPER_TIMEOUT, []),
-        withTimeout(scrapeGrubhub(zipCode), SCRAPER_TIMEOUT, []),
-        withTimeout(scrapeUberEats(zipCode), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeGoogle(zipCode, city, state), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeDoorDash(zipCode, city, state), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeGrubhub(zipCode, city, state), SCRAPER_TIMEOUT, []),
+        withTimeout(scrapeUberEats(zipCode, city, state), SCRAPER_TIMEOUT, []),
     ]);
 
     const allRestaurants: ScrapedRestaurant[] = [];
@@ -356,12 +416,31 @@ export async function scrapeAllSources(
     let wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
     wingSpots = deduplicateWingSpots(wingSpots);
 
+    // Post-scrape state validation: reject results from wrong states
+    if (state) {
+        const targetState = normalizeStateAbbreviation(state);
+        const beforeCount = wingSpots.length;
+        wingSpots = wingSpots.filter(spot => {
+            if (!spot.address) return true; // Can't validate without address, keep it
+            const spotState = extractStateFromAddress(spot.address);
+            if (!spotState) return true; // No state found in address, keep it
+            if (spotState === targetState) return true; // Correct state
+            // Wrong state — reject
+            console.warn(`Rejected out-of-state result: "${spot.name}" (${spotState}) — expected ${targetState}`);
+            return false;
+        });
+        const rejected = beforeCount - wingSpots.length;
+        if (rejected > 0) {
+            console.log(`State validation: rejected ${rejected}/${beforeCount} out-of-state results (target: ${targetState})`);
+        }
+    }
+
     // Apply flavor scoring if persona selected
     if (flavor) {
         wingSpots = applyFlavorScoring(wingSpots, flavor);
     }
 
-    console.log(`Total: ${allRestaurants.length} raw, ${wingSpots.length} unique after dedup`);
+    console.log(`Total: ${allRestaurants.length} raw, ${wingSpots.length} unique after dedup + validation`);
 
     return wingSpots;
 }

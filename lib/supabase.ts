@@ -63,6 +63,27 @@ export async function getWingSpotsByZip(
 }
 
 /**
+ * Delete all wing spots for a zip code (for purging stale/incorrect data)
+ */
+export async function deleteWingSpotsByZip(
+    client: SupabaseClientAny,
+    zipCode: string
+): Promise<{ error: Error | null }> {
+    const { error } = await client
+        .from('wing_spots')
+        .delete()
+        .eq('zip_code', zipCode);
+
+    if (error) {
+        console.error(`Failed to delete wing spots for zip ${zipCode}:`, error);
+    } else {
+        console.log(`Deleted wing spots for zip: ${zipCode}`);
+    }
+
+    return { error: error as Error | null };
+}
+
+/**
  * Get wing spots near a location (bounding box query)
  */
 export async function getWingSpotsNearLocation(

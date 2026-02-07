@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, getWingSpotsByZip, upsertWingSpots } from '@/lib/supabase';
-import { getCachedWingSpots, cacheWingSpots, checkRateLimit, getCachedScrapeResult, cacheScrapeResult } from '@/lib/cache';
+import { createServerClient, getWingSpotsByZip, upsertWingSpots, deleteWingSpotsByZip } from '@/lib/supabase';
+import { getCachedWingSpots, cacheWingSpots, checkRateLimit, getCachedScrapeResult, cacheScrapeResult, purgeZipCache } from '@/lib/cache';
 import { geocodeZipCode } from '@/lib/geocode';
 import { scrapeAllSources } from '@/lib/agentql';
 import { generateSeedData } from '@/lib/seed-data';
@@ -38,8 +38,9 @@ export async function GET(request: NextRequest) {
     const rawZip = searchParams.get('zip');
     const rawFlavor = searchParams.get('flavor');
     const forceRefresh = searchParams.get('refresh') === 'true';
+    const purge = searchParams.get('purge') === 'true';
 
-    log(`START zip=${rawZip} flavor=${rawFlavor}`);
+    log(`START zip=${rawZip} flavor=${rawFlavor}${purge ? ' PURGE=true' : ''}`);
 
     // Validate zip code
     if (!rawZip || !isValidZipCode(rawZip)) {
@@ -73,8 +74,19 @@ export async function GET(request: NextRequest) {
     // where HMR restarts leave stale promises in memory
 
     try {
-        // 1. Check Redis cache first
-        if (!forceRefresh) {
+        // 0. Purge stale/incorrect data if requested
+        if (purge) {
+            log('PURGE: clearing Redis cache + Supabase data for zip...');
+            const supabasePurge = createServerClient();
+            await Promise.all([
+                purgeZipCache(zipCode),
+                deleteWingSpotsByZip(supabasePurge, zipCode),
+            ]);
+            log('PURGE: done');
+        }
+
+        // 1. Check Redis cache first (skip if purging or force-refreshing)
+        if (!forceRefresh && !purge) {
             log('checking Redis scrapeResult cache...');
             const cachedResult = await getCachedScrapeResult(zipCode);
             if (cachedResult) {
@@ -110,7 +122,7 @@ export async function GET(request: NextRequest) {
         const { data: dbSpots } = await getWingSpotsByZip(supabase, zipCode);
         log(`Supabase: ${dbSpots?.length ?? 0} rows`);
 
-        if (dbSpots && dbSpots.length > 0 && !forceRefresh) {
+        if (dbSpots && dbSpots.length > 0 && !forceRefresh && !purge) {
             const timestamps = dbSpots.map(s => new Date(s.last_updated).getTime()).filter(t => !isNaN(t));
             if (timestamps.length === 0) timestamps.push(0);
             const latestUpdate = new Date(Math.max(...timestamps));
@@ -153,7 +165,7 @@ export async function GET(request: NextRequest) {
 
         // 4. Scrape all sources in parallel
         log('starting scrapers...');
-        let scrapedSpots = await scrapeAllSources(zipCode, location.lat, location.lng, flavor);
+        let scrapedSpots = await scrapeAllSources(zipCode, location.lat, location.lng, flavor, location.city, location.state);
         log(`scrapers done: ${scrapedSpots.length} spots`);
 
         if (scrapedSpots.length === 0) {
