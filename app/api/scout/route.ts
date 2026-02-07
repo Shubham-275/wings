@@ -6,7 +6,7 @@ import { scrapeAllSources } from '@/lib/agentql';
 import { generateSeedData } from '@/lib/seed-data';
 import { isValidZipCode, cleanZipCode, calculateAvailability } from '@/lib/utils';
 import { startBackgroundMenuScrape, getCheapestWingPrice } from '@/lib/menu';
-import { ScoutResponse, FlavorPersona, WingSpot } from '@/lib/types';
+import { ScoutResponse, FlavorPersona, WingSpot, MenuSection } from '@/lib/types';
 
 // Render.com: No timeout limit for Web Services (unlimited runtime)
 // Setting Node.js runtime explicitly
@@ -33,27 +33,80 @@ const VALID_FLAVORS: FlavorPersona[] = ['face-melter', 'classicist', 'sticky-fin
 const MAX_AUTO_SCRAPES = 5; // Limit auto-triggered menu scrapes to conserve Mino API calls
 
 /**
- * Enrich spots with cached wing prices from Redis menu cache.
- * For spots where price_per_wing is null, check if a menu has been cached
- * and extract the cheapest wing price.
+ * Enrich spots with wing prices from multiple sources:
+ * 1. Redis menu cache (fastest)
+ * 2. Supabase menus table (if Redis misses)
+ * 3. Supabase wing_spots table (if background scrape already wrote price_per_wing)
  */
 async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
     const enriched = [...spots];
-    const promises = enriched.map(async (spot, idx) => {
-        if (spot.price_per_wing !== null) return; // Already has a price
+    const missingPriceIds = enriched
+        .map((s, i) => ({ id: s.id, idx: i }))
+        .filter(({ idx }) => enriched[idx].price_per_wing === null);
+
+    if (missingPriceIds.length === 0) return enriched;
+
+    // Step 1: Try Redis menu cache first (parallel)
+    const redisPromises = missingPriceIds.map(async ({ id, idx }) => {
         try {
-            const cachedMenu = await getCachedMenu(spot.id);
+            const cachedMenu = await getCachedMenu(id);
             if (cachedMenu?.sections) {
                 const price = getCheapestWingPrice(cachedMenu.sections);
                 if (price !== null) {
-                    enriched[idx] = { ...spot, price_per_wing: price };
+                    enriched[idx] = { ...enriched[idx], price_per_wing: price };
                 }
             }
-        } catch {
-            // Ignore cache errors during enrichment
-        }
+        } catch { /* ignore */ }
     });
-    await Promise.all(promises);
+    await Promise.all(redisPromises);
+
+    // Step 2: For remaining nulls, check Supabase wing_spots (background scrape may have written prices)
+    const stillMissing = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    if (stillMissing.length > 0) {
+        try {
+            const supabase = createServerClient();
+            const { data: dbPrices } = await supabase
+                .from('wing_spots')
+                .select('id, price_per_wing')
+                .in('id', stillMissing.map(m => m.id))
+                .not('price_per_wing', 'is', null);
+
+            if (dbPrices) {
+                const priceMap = new Map(dbPrices.map(d => [d.id, d.price_per_wing]));
+                for (const { id, idx } of stillMissing) {
+                    const dbPrice = priceMap.get(id);
+                    if (dbPrice !== undefined && dbPrice !== null) {
+                        enriched[idx] = { ...enriched[idx], price_per_wing: dbPrice };
+                    }
+                }
+            }
+        } catch { /* ignore */ }
+    }
+
+    // Step 3: For STILL remaining nulls, check Supabase menus table
+    const stillMissing2 = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    if (stillMissing2.length > 0 && stillMissing2.length <= 10) {
+        try {
+            const supabase = createServerClient();
+            const { data: dbMenus } = await supabase
+                .from('menus')
+                .select('spot_id, sections')
+                .in('spot_id', stillMissing2.map(m => m.id));
+
+            if (dbMenus) {
+                for (const dbMenu of dbMenus) {
+                    const match = stillMissing2.find(m => m.id === dbMenu.spot_id);
+                    if (match && dbMenu.sections) {
+                        const price = getCheapestWingPrice(dbMenu.sections as MenuSection[]);
+                        if (price !== null) {
+                            enriched[match.idx] = { ...enriched[match.idx], price_per_wing: price };
+                        }
+                    }
+                }
+            }
+        } catch { /* ignore */ }
+    }
+
     return enriched;
 }
 

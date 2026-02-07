@@ -320,7 +320,7 @@ export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected,
                             <MapPin className="w-3 h-3" /> LOCATION
                         </span>
                         <span className="text-[9px] text-gray-500 text-right leading-tight">
-                            {spot.address || 'TBD'}
+                            {spot.address || `Near ${spot.zip_code}`}
                         </span>
                     </div>
                 </div>
@@ -354,7 +354,7 @@ export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected,
                             </a>
                         )}
                         <a
-                            href={getGoogleMapsUrl(spot.address)}
+                            href={getGoogleMapsUrl(spot.address || `${spot.name} near ${spot.zip_code}`)}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"

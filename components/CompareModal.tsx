@@ -234,7 +234,7 @@ export function CompareModal({ spots, isOpen, onClose }: CompareModalProps) {
                                                         key={spot.id}
                                                         className="text-center py-2.5 px-2 text-[10px] text-gray-500 leading-tight"
                                                     >
-                                                        {spot.address || '—'}
+                                                        {spot.address || `Near ${spot.zip_code}`}
                                                     </td>
                                                 ))}
                                             </tr>

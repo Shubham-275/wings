@@ -123,7 +123,7 @@ export async function scrapeDoorDash(zipCode: string, city?: string, state?: str
 
     try {
         const searchUrl = `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
+        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of restaurants with these fields for each: name, address (full street address if visible, or neighborhood/area name), delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
