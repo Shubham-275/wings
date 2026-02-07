@@ -238,10 +238,10 @@ function WingCommandContent() {
                                 <StatsBar stats={stats} locationName={locationName} />
 
                                 <motion.p
-                                    className="font-marker text-stadium-green text-sm text-center"
-                                    style={{ opacity: 0.6 }}
+                                    className="font-marker text-white text-sm text-center"
+                                    style={{ textShadow: '0 2px 8px rgba(0,0,0,0.4)' }}
                                     initial={{ opacity: 0 }}
-                                    animate={{ opacity: 0.6 }}
+                                    animate={{ opacity: 0.8 }}
                                     transition={{ delay: 0.4 }}
                                 >
                                     Step 3: The Scouting Report

@@ -134,14 +134,14 @@ export function TradingCardGrid({ spots, isLoading }: TradingCardGridProps) {
                 transition={{ delay: 0.2 }}
             >
                 <div className="text-center md:text-left">
-                    <h2 className="font-heading text-xl md:text-2xl tracking-[0.12em] text-stadium-green uppercase">
+                    <h2 className="font-heading text-xl md:text-2xl tracking-[0.12em] text-white uppercase" style={{ textShadow: '0 2px 10px rgba(0,0,0,0.5)' }}>
                         Scouting Report
                     </h2>
-                    <p className="text-chalk-light text-xs tracking-wider font-marker mt-1">
+                    <p className="text-white/70 text-xs tracking-wider font-marker mt-1" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.4)' }}>
                         Your wing lineup — drafted, graded, and filed.
                     </p>
                 </div>
-                <span className="text-chalk-light text-sm font-heading tracking-wider">
+                <span className="text-white/70 text-sm font-heading tracking-wider" style={{ textShadow: '0 1px 4px rgba(0,0,0,0.4)' }}>
                     {spots.length} SPOT{spots.length !== 1 ? 'S' : ''} SCOUTED
                 </span>
             </motion.div>
