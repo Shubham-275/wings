@@ -1,31 +1,32 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, Bebas_Neue, Permanent_Marker, Russo_One } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 
-const inter = Inter({
-    subsets: ['latin'],
+// Self-hosted fonts — avoids build-time Google Fonts downloads that fail on Render
+const inter = localFont({
+    src: './fonts/Inter-latin.woff2',
     variable: '--font-inter',
     display: 'swap',
 });
 
-const bebasNeue = Bebas_Neue({
+const bebasNeue = localFont({
+    src: './fonts/BebasNeue-latin.woff2',
     weight: '400',
-    subsets: ['latin'],
     variable: '--font-bebas',
     display: 'swap',
 });
 
-const russoOne = Russo_One({
+const russoOne = localFont({
+    src: './fonts/RussoOne-latin.woff2',
     weight: '400',
-    subsets: ['latin'],
     variable: '--font-russo',
     display: 'swap',
 });
 
 // "Permanent Marker" handwriting font for coach notes:
-const permanentMarker = Permanent_Marker({
+const permanentMarker = localFont({
+    src: './fonts/PermanentMarker-latin.woff2',
     weight: '400',
-    subsets: ['latin'],
     variable: '--font-marker',
     display: 'swap',
 });
