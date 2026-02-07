@@ -292,10 +292,95 @@ function extractItemsFromText(text: string): MenuItem[] {
 // ===========================================
 
 /**
- * Scrape wing items from restaurant using Mino
+ * Single scrape attempt: call Mino, parse the response using all available formats.
+ * Returns MenuSection[] (may be empty []) or null on API failure.
+ */
+async function attemptScrape(
+    scrape: (url: string, goal: string) => Promise<AgentQLResponse>,
+    url: string,
+    goal: string
+): Promise<MenuSection[] | null> {
+    console.log(`Mino wing scrape: ${url}`);
+    const result = await scrape(url, goal);
+
+    if (!result.success || !result.data) {
+        console.log('Mino wing scrape: No results');
+        return null;
+    }
+
+    // Mino can return result as a JSON string or a parsed object — handle both
+    let parsed: unknown = result.data;
+    console.log(`Mino wing scrape: result.data type = ${typeof parsed}`);
+
+    if (typeof parsed === 'string') {
+        const trimmed = (parsed as string).trim();
+        try {
+            parsed = JSON.parse(trimmed);
+            console.log('Mino wing scrape: Parsed string result to object');
+        } catch {
+            // Not valid JSON — try to extract items from the text
+            console.log('Mino wing scrape: String is not JSON, trying text extraction');
+            const textItems = extractItemsFromText(trimmed);
+            if (textItems.length > 0) {
+                console.log(`Mino wing scrape: Extracted ${textItems.length} items from text`);
+                return [{ name: 'Wings', items: textItems }];
+            }
+            console.log('Mino wing scrape: No extractable items from text response');
+            return []; // Empty array = "no wings found" (not null = "failed")
+        }
+    }
+
+    // Standard format: { sections: [...] }
+    const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
+    if (data.sections && Array.isArray(data.sections)) {
+        if (data.sections.length === 0) {
+            console.log('Mino wing scrape: Returned empty sections array (no wings at this restaurant)');
+            return []; // Mino explicitly said no wings
+        }
+
+        // Parse and structure the menu sections
+        const sections: MenuSection[] = data.sections.map(section => ({
+            name: String(section.name || 'Wings'),
+            items: (section.items || []).map((item: unknown) => {
+                const itemObj = item as Record<string, unknown>;
+                return {
+                    name: String(itemObj.name || 'Unknown Item'),
+                    description: itemObj.description ? String(itemObj.description) : undefined,
+                    price: itemObj.price ? parseFloat(String(itemObj.price)) : null,
+                    quantity: itemObj.quantity ? parseInt(String(itemObj.quantity)) : undefined,
+                    price_per_wing: calculatePricePerWing(itemObj.price, itemObj.quantity, String(itemObj.name || '')),
+                    is_deal: detectDeal(String(itemObj.name || ''), String(itemObj.description || '')),
+                };
+            }),
+        }));
+
+        console.log(`Mino wing scrape: Found ${sections.length} sections (standard format)`);
+        return sections;
+    }
+
+    // Non-standard format — try alternative extraction
+    console.log('Mino wing scrape: No sections found, trying alternative formats...',
+        JSON.stringify(data).substring(0, 300));
+    const altSections = extractFromAlternativeFormat(parsed);
+    if (altSections && altSections.length > 0) {
+        return altSections;
+    }
+
+    // Mino returned data but nothing we can parse into wing items
+    console.log('Mino wing scrape: Could not extract wing items from response');
+    return []; // Empty = "no wings found at this restaurant"
+}
+
+/**
+ * Scrape wing items from restaurant using Mino.
  * Accepts optional scrape function for timeout flexibility:
  * - Default: executeMinoMenuScrape (45s timeout) for fast path
  * - Background: executeMinoScrape (120s timeout) for background scrape
+ *
+ * Fallback chain:
+ * 1. Try platform URL (Grubhub/DoorDash/UberEats) if available
+ * 2. If platform URL returns empty → try Google search for "[name] menu wings"
+ * 3. If already on Google (no platform URL) → single attempt only (no loop)
  *
  * Returns MenuSection[] (may be empty []) or null on total failure
  */
@@ -315,75 +400,24 @@ export async function scrapeMenuWithMino(
     const goal = getWingsOnlyGoal(hasDirectUrl);
 
     try {
-        console.log(`Mino wing scrape: ${scrapeUrl}`);
-        const result = await scrape(scrapeUrl, goal);
+        // First attempt: platform URL or Google Maps
+        const sections = await attemptScrape(scrape, scrapeUrl, goal);
 
-        if (!result.success || !result.data) {
-            console.log('Mino wing scrape: No results');
-            return null;
-        }
-
-        // Mino can return result as a JSON string or a parsed object — handle both
-        let parsed: unknown = result.data;
-        console.log(`Mino wing scrape: result.data type = ${typeof parsed}`);
-
-        if (typeof parsed === 'string') {
-            const trimmed = (parsed as string).trim();
-            try {
-                parsed = JSON.parse(trimmed);
-                console.log('Mino wing scrape: Parsed string result to object');
-            } catch {
-                // Not valid JSON — try to extract items from the text
-                console.log('Mino wing scrape: String is not JSON, trying text extraction');
-                const textItems = extractItemsFromText(trimmed);
-                if (textItems.length > 0) {
-                    console.log(`Mino wing scrape: Extracted ${textItems.length} items from text`);
-                    return [{ name: 'Wings', items: textItems }];
-                }
-                console.log('Mino wing scrape: No extractable items from text response');
-                return []; // Empty array = "no wings found" (not null = "failed")
+        // If platform URL returned empty, try Google search as fallback
+        // Only when we used a direct URL (don't loop if already on Google)
+        if (sections !== null && sections.length === 0 && hasDirectUrl) {
+            console.log(`Mino wing scrape: platform URL returned empty, trying Google search for "${name}"...`);
+            const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(name + ' menu wings')}`;
+            const googleGoal = getWingsOnlyGoal(false);
+            const googleSections = await attemptScrape(scrape, googleUrl, googleGoal);
+            if (googleSections && googleSections.length > 0) {
+                console.log(`Mino wing scrape: Google fallback found ${googleSections.length} sections!`);
+                return googleSections;
             }
+            console.log('Mino wing scrape: Google fallback also empty — genuinely no wings');
         }
 
-        // Standard format: { sections: [...] }
-        const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
-        if (data.sections && Array.isArray(data.sections)) {
-            if (data.sections.length === 0) {
-                console.log('Mino wing scrape: Returned empty sections array (no wings at this restaurant)');
-                return []; // Mino explicitly said no wings
-            }
-
-            // Parse and structure the menu sections
-            const sections: MenuSection[] = data.sections.map(section => ({
-                name: String(section.name || 'Wings'),
-                items: (section.items || []).map((item: unknown) => {
-                    const itemObj = item as Record<string, unknown>;
-                    return {
-                        name: String(itemObj.name || 'Unknown Item'),
-                        description: itemObj.description ? String(itemObj.description) : undefined,
-                        price: itemObj.price ? parseFloat(String(itemObj.price)) : null,
-                        quantity: itemObj.quantity ? parseInt(String(itemObj.quantity)) : undefined,
-                        price_per_wing: calculatePricePerWing(itemObj.price, itemObj.quantity, String(itemObj.name || '')),
-                        is_deal: detectDeal(String(itemObj.name || ''), String(itemObj.description || '')),
-                    };
-                }),
-            }));
-
-            console.log(`Mino wing scrape: Found ${sections.length} sections (standard format)`);
-            return sections;
-        }
-
-        // Non-standard format — try alternative extraction
-        console.log('Mino wing scrape: No sections found, trying alternative formats...',
-            JSON.stringify(data).substring(0, 300));
-        const altSections = extractFromAlternativeFormat(parsed);
-        if (altSections && altSections.length > 0) {
-            return altSections;
-        }
-
-        // Mino returned data but nothing we can parse into wing items
-        console.log('Mino wing scrape: Could not extract wing items from response');
-        return []; // Empty = "no wings found at this restaurant"
+        return sections;
     } catch (error) {
         console.error('Mino wing scrape error:', error);
         return null; // null = actual failure, can retry
