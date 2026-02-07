@@ -141,7 +141,14 @@ function WingCommandContent() {
             return res.json();
         },
         enabled: zipCode.length === 5 && flavor !== null,
-        retry: 2,
+        retry: (failureCount, error) => {
+            // Don't retry geocoding failures — all server-side fallbacks already exhausted
+            if (error instanceof Error && error.message.includes('Could not geocode')) return false;
+            // Don't retry rate limits
+            if (error instanceof Error && error.message.includes('Rate limited')) return false;
+            // Retry other transient errors up to 2 times
+            return failureCount < 2;
+        },
         retryDelay: 3000,
         refetchInterval: CACHE_DURATION_MS,
         refetchIntervalInBackground: false,

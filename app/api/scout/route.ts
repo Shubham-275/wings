@@ -158,8 +158,8 @@ export async function GET(request: NextRequest) {
                 });
             }
             return NextResponse.json<ScoutResponse>(
-                { success: false, spots: [], cached: false, message: 'Could not find location for zip code' },
-                { status: 404 }
+                { success: false, spots: [], cached: false, message: 'Could not geocode zip code. Please try again.' },
+                { status: 502 }
             );
         }
 
