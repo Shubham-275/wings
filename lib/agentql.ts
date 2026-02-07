@@ -29,7 +29,8 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
 }
 
 // Render has unlimited runtime, but individual scraper calls still need per-source limits
-const SCRAPER_TIMEOUT = 120000; // 120 seconds per source
+const SCRAPER_TIMEOUT = 120000; // 120 seconds per source (restaurant discovery)
+const MENU_SCRAPER_TIMEOUT = 45000; // 45 seconds for menu fetch (must fit inside maxDuration=60)
 
 interface MinoSyncResponse {
     run_id: string;
@@ -41,17 +42,20 @@ interface MinoSyncResponse {
     error: string | null;
 }
 
-export async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResponse> {
+/**
+ * Core Mino scrape function with configurable timeout
+ */
+async function runMinoScrape(url: string, goal: string, timeoutMs: number): Promise<AgentQLResponse> {
     if (!MINO_API_KEY) {
         console.error('Mino API key not configured');
         return { success: false, data: null, error: 'MINO API KEY not configured' };
     }
 
     try {
-        console.log(`Mino scraping: ${url}`);
+        console.log(`Mino scraping (${timeoutMs}ms timeout): ${url}`);
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), SCRAPER_TIMEOUT);
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
         const response = await fetch(MINO_API_URL, {
             method: 'POST',
@@ -89,12 +93,27 @@ export async function executeMinoScrape(url: string, goal: string): Promise<Agen
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         if (errorMessage.includes('abort')) {
-            console.error(`Mino timeout after ${SCRAPER_TIMEOUT}ms for: ${url}`);
+            console.error(`Mino timeout after ${timeoutMs}ms for: ${url}`);
         } else {
             console.error('Mino API error:', errorMessage);
         }
         return { success: false, data: null, error: errorMessage };
     }
+}
+
+/**
+ * Execute Mino scrape for restaurant discovery (120s timeout)
+ */
+export async function executeMinoScrape(url: string, goal: string): Promise<AgentQLResponse> {
+    return runMinoScrape(url, goal, SCRAPER_TIMEOUT);
+}
+
+/**
+ * Execute Mino scrape for menu extraction (45s timeout)
+ * Shorter timeout to fit within the /api/menu maxDuration=60s limit
+ */
+export async function executeMinoMenuScrape(url: string, goal: string): Promise<AgentQLResponse> {
+    return runMinoScrape(url, goal, MENU_SCRAPER_TIMEOUT);
 }
 
 // ===== DOORDASH SCRAPER =====

@@ -4,7 +4,7 @@
 
 import axios from 'axios';
 import { Menu, MenuSection, MenuItem, PlatformIds } from './types';
-import { executeMinoScrape } from './agentql';
+import { executeMinoMenuScrape } from './agentql';
 
 /**
  * Main menu fetching function with fallback chain
@@ -94,25 +94,8 @@ async function scrapeMenuWithMino(
         // Use the direct restaurant URL if available (DoorDash, UberEats, Grubhub)
         scrapeUrl = platformIds.source_url;
         goal = `Navigate to this restaurant page and extract the full menu.
-Return a JSON object with an array called "sections", where each section has:
-- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
-- items (array of menu items)
-
-Each item should have:
-- name (item name)
-- description (optional description text)
-- price (number only, just the dollar amount without $ symbol)
-
-Focus especially on wing items and chicken dishes. Include all visible menu sections.`;
-    } else {
-        // Fallback to Google Maps for menu extraction
-        scrapeUrl = `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
-        goal = `Find this restaurant on Google Maps and extract its menu.
-Steps:
-1. Click on the restaurant listing in the search results
-2. Look for a "Menu" tab or section on the business profile
-3. If a menu link or tab exists, click it to see the full menu
-4. If no menu tab, look for menu items shown in the overview or photos
+If the page has a text-based menu, extract items directly.
+If you see menu images or photos, read the text from the images to extract item names and prices.
 
 Return a JSON object with an array called "sections", where each section has:
 - name (section name like "Wings", "Appetizers", "Combos", "Entrees")
@@ -124,12 +107,33 @@ Each item should have:
 - price (number only, just the dollar amount without $ symbol)
 
 Focus especially on wing items and chicken dishes. Include all visible menu sections.
-If the menu is not available on Google Maps, try clicking any linked website or ordering platform to find the menu there.`;
+Be efficient — extract what's visible quickly, don't navigate through too many pages.`;
+    } else {
+        // Fallback to Google Maps for menu extraction
+        scrapeUrl = `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
+        goal = `Find this restaurant on Google Maps and extract its menu.
+Steps:
+1. Click on the restaurant listing in the search results
+2. Look for a "Menu" tab or section — if found, extract items from it
+3. If no menu tab, check the "Photos" section for menu images — you can read text from images to extract menu items and prices
+4. If you find menu photos, read every item name, description, and price visible in the image
+
+Return a JSON object with an array called "sections", where each section has:
+- name (section name like "Wings", "Appetizers", "Combos", "Entrees")
+- items (array of menu items)
+
+Each item should have:
+- name (item name)
+- description (optional description text)
+- price (number only, just the dollar amount without $ symbol)
+
+Focus especially on wing items and chicken dishes. Include all visible menu sections.
+Be efficient — don't spend more than 30 seconds navigating. Extract what you can find quickly.`;
     }
 
     try {
         console.log(`Mino menu scrape: ${scrapeUrl}`);
-        const result = await executeMinoScrape(scrapeUrl, goal);
+        const result = await executeMinoMenuScrape(scrapeUrl, goal);
 
         if (!result.success || !result.data) {
             console.log('Mino menu scrape: No results');

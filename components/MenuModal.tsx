@@ -112,8 +112,16 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
         setLoading(true);
         setError(null);
 
+        // 50-second client-side timeout — prevents infinite hangs
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 50000);
+
         try {
-            const res = await fetch(`/api/menu?spot_id=${encodeURIComponent(spot.id)}`);
+            const res = await fetch(
+                `/api/menu?spot_id=${encodeURIComponent(spot.id)}`,
+                { signal: controller.signal }
+            );
+            clearTimeout(timeoutId);
             const data: MenuResponse = await res.json();
 
             if (data.success && data.menu) {
@@ -121,8 +129,13 @@ export function MenuModal({ spot, isOpen, onClose }: MenuModalProps) {
             } else {
                 setError(data.message || 'Menu not available');
             }
-        } catch {
-            setError('Failed to load menu. Please try again.');
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err instanceof Error && err.name === 'AbortError') {
+                setError('Menu is taking too long to load. Try again or check the restaurant website directly.');
+            } else {
+                setError('Failed to load menu. Please try again.');
+            }
         } finally {
             setLoading(false);
         }
