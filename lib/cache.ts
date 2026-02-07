@@ -89,6 +89,20 @@ export async function cacheGeocode(geocode: GeocodedLocation): Promise<void> {
 }
 
 /**
+ * Purge all cached data for a zip code (for clearing stale/incorrect data)
+ */
+export async function purgeZipCache(zipCode: string): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.del(keys.wingSpots(zipCode));
+        await redis.del(keys.scrapeResult(zipCode));
+        console.log(`Purged Redis cache for zip: ${zipCode}`);
+    } catch (error) {
+        console.error('Redis purgeZipCache error:', error);
+    }
+}
+
+/**
  * Get cached scrape result
  */
 export async function getCachedScrapeResult(zipCode: string): Promise<ScrapeResponse | null> {
