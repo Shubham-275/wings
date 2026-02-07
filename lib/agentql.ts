@@ -122,8 +122,11 @@ export async function scrapeDoorDash(zipCode: string, city?: string, state?: str
     const locationHint = city && state ? ` in ${city}, ${state}` : '';
 
     try {
-        const searchUrl = `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of restaurants with these fields for each: name, address (full street address if visible, or neighborhood/area name), delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
+        const citySlug = city ? city.toLowerCase().replace(/\s+/g, '-') : '';
+        const searchUrl = citySlug && state
+            ? `https://www.doordash.com/food-delivery/${citySlug}-${state.toLowerCase()}-restaurants/chicken-wings/`
+            : `https://www.doordash.com/search/store/chicken%20wings%20near%20${zipCode}/?pickup=false`;
+        const goal = `Find chicken wings restaurants that deliver to zip code ${zipCode}${locationHint}. IMPORTANT: Only include restaurants located in or delivering to ${city || 'this area'}, ${state || 'US'}. Ignore any results from other cities. Extract a JSON array of restaurants with these fields for each: name, address (full street address if visible, or neighborhood/area name), delivery_time (as string like "25-35 min"), rating (number), image_url, is_open (boolean), store_url (the DoorDash URL path like /store/12345/). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
@@ -160,8 +163,11 @@ export async function scrapeUberEats(zipCode: string, city?: string, state?: str
     const locationHint = city && state ? ` in ${city}, ${state}` : '';
 
     try {
-        const searchUrl = `https://www.ubereats.com/search?q=chicken%20wings%20near%20${zipCode}`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean), store_url (the UberEats URL path like /store/restaurant-name/uuid). Return as JSON array called "stores".`;
+        const citySlug = city ? city.toLowerCase().replace(/\s+/g, '-') : '';
+        const searchUrl = citySlug && state
+            ? `https://www.ubereats.com/city/${citySlug}-${state.toLowerCase()}/food-delivery/chicken-wings`
+            : `https://www.ubereats.com/search?q=chicken%20wings%20near%20${zipCode}`;
+        const goal = `Find chicken wings restaurants that deliver to zip code ${zipCode}${locationHint}. IMPORTANT: Only include restaurants in ${city || 'this area'}, ${state || 'US'}. Ignore results from other cities. Extract a JSON array of stores with these fields for each: name, address, eta (delivery time as string), rating (number), image (image URL), is_available (boolean), store_url (the UberEats URL path like /store/restaurant-name/uuid). Return as JSON array called "stores".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
@@ -198,8 +204,10 @@ export async function scrapeGrubhub(zipCode: string, city?: string, state?: stri
     const locationHint = city && state ? ` in ${city}, ${state}` : '';
 
     try {
-        const searchUrl = `https://www.grubhub.com/search?query=chicken+wings+near+${zipCode}&locationMode=DELIVERY`;
-        const goal = `Search for chicken wings restaurants near zip code ${zipCode}${locationHint}. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean), restaurant_url (the Grubhub URL path like /restaurant/name/12345). Return as JSON array called "restaurants".`;
+        const searchUrl = city && state
+            ? `https://www.grubhub.com/delivery/${city.toLowerCase().replace(/\s+/g, '-')}-${state.toLowerCase()}/chicken-wings`
+            : `https://www.grubhub.com/search?query=chicken+wings+near+${zipCode}&locationMode=DELIVERY`;
+        const goal = `Find chicken wings restaurants that deliver to zip code ${zipCode}${locationHint}. IMPORTANT: Only include restaurants in ${city || 'this area'}, ${state || 'US'}. Ignore results from other cities. Extract a JSON array of restaurants with these fields for each: name, address, delivery_time (as string), rating (number), image (image URL), is_open (boolean), restaurant_url (the Grubhub URL path like /restaurant/name/12345). Return as JSON array called "restaurants".`;
 
         const result = await executeMinoScrape(searchUrl, goal);
         if (!result.success || !result.data) return restaurants;
@@ -238,7 +246,8 @@ export async function scrapeGoogle(zipCode: string, city?: string, state?: strin
     try {
         const searchUrl = `https://www.google.com/search?q=best+chicken+wings+local+sports+bar+${zipCode}${locationQuery}`;
         const goal = `Extract ALL chicken wings restaurants visible on this Google search results page.
-IMPORTANT: Include local establishments like:
+IMPORTANT: Only include restaurants located in or near ${city || `zip code ${zipCode}`}, ${state || 'US'}. Ignore any results from other cities or states.
+Include local establishments like:
 - Family-owned restaurants and pizzerias with wings
 - Sports bars and dive bars serving wings
 - Local BBQ joints and wing shops
@@ -247,7 +256,7 @@ IMPORTANT: Include local establishments like:
 NOT just major chains like Buffalo Wild Wings, Wingstop, or Hooters.
 Return a JSON array called "businesses" with these fields for each restaurant:
 - name (restaurant name)
-- address (full street address)
+- address (full street address including city and state)
 - rating (number like 4.2)
 - phone (phone number if visible)
 - hours (like "Closed - Opens 11 am" or "Open - Closes 10 pm")
@@ -435,22 +444,50 @@ export async function scrapeAllSources(
     let wingSpots = processRestaurants(allRestaurants, zipCode, lat, lng);
     wingSpots = deduplicateWingSpots(wingSpots);
 
-    // Post-scrape state validation: reject results from wrong states
+    // Post-scrape state validation: reject results from wrong states/cities
     if (state) {
         const targetState = normalizeStateAbbreviation(state);
+        const targetCity = city?.toLowerCase().replace(/\s+/g, '-') || '';
         const beforeCount = wingSpots.length;
         wingSpots = wingSpots.filter(spot => {
-            if (!spot.address) return true; // Can't validate without address, keep it
-            const spotState = extractStateFromAddress(spot.address);
-            if (!spotState) return true; // No state found in address, keep it
-            if (spotState === targetState) return true; // Correct state
-            // Wrong state — reject
-            console.warn(`Rejected out-of-state result: "${spot.name}" (${spotState}) — expected ${targetState}`);
-            return false;
+            // 1. Check address for state mismatch
+            if (spot.address) {
+                const spotState = extractStateFromAddress(spot.address);
+                if (spotState && spotState !== targetState) {
+                    console.warn(`Rejected out-of-state result: "${spot.name}" address="${spot.address}" (${spotState}) — expected ${targetState}`);
+                    return false;
+                }
+                if (spotState === targetState) return true; // Confirmed correct state
+            }
+
+            // 2. Check source_url for wrong-city hints (DoorDash URLs contain city like /store/name-los-angeles/)
+            const sourceUrl = spot.platform_ids?.source_url || '';
+            if (sourceUrl && targetCity) {
+                // Known major cities to cross-check against
+                const majorCities = [
+                    'los-angeles', 'new-york', 'chicago', 'houston', 'phoenix', 'philadelphia',
+                    'san-antonio', 'san-diego', 'dallas', 'san-jose', 'austin', 'jacksonville',
+                    'fort-worth', 'columbus', 'charlotte', 'san-francisco', 'indianapolis', 'seattle',
+                    'denver', 'washington', 'nashville', 'oklahoma-city', 'el-paso', 'boston',
+                    'portland', 'las-vegas', 'memphis', 'louisville', 'baltimore', 'milwaukee',
+                    'albuquerque', 'tucson', 'fresno', 'mesa', 'sacramento', 'atlanta', 'miami',
+                    'detroit', 'minneapolis', 'tampa', 'pittsburgh', 'st-louis', 'orlando',
+                ];
+                const urlLower = sourceUrl.toLowerCase();
+                for (const wrongCity of majorCities) {
+                    if (wrongCity !== targetCity && urlLower.includes(wrongCity)) {
+                        console.warn(`Rejected wrong-city result: "${spot.name}" URL contains "${wrongCity}" — expected "${targetCity}"`);
+                        return false;
+                    }
+                }
+            }
+
+            // 3. No address and no URL city mismatch — keep it (benefit of the doubt)
+            return true;
         });
         const rejected = beforeCount - wingSpots.length;
         if (rejected > 0) {
-            console.log(`State validation: rejected ${rejected}/${beforeCount} out-of-state results (target: ${targetState})`);
+            console.log(`Location validation: rejected ${rejected}/${beforeCount} out-of-area results (target: ${city}, ${targetState})`);
         }
     }
 
