@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { getCachedMenu, cacheMenu } from '@/lib/cache';
+import { getCachedMenu, cacheMenu, getCachedChainMenu, cacheChainMenu } from '@/lib/cache';
 import { fetchMenu } from '@/lib/menu';
 import { MenuResponse, Menu } from '@/lib/types';
 
@@ -24,6 +24,16 @@ export async function GET(request: NextRequest) {
             { success: false, menu: null, cached: false, message: 'spot_id is required' },
             { status: 400 }
         );
+    }
+
+    // Seed data spots have no real restaurants — skip Mino entirely
+    if (spotId.startsWith('seed-')) {
+        return NextResponse.json<MenuResponse>({
+            success: false,
+            menu: null,
+            cached: false,
+            message: 'Menu not available for demo restaurants. Search with a real zip code to see live menus!',
+        });
     }
 
     // Check for in-flight request (deduplication)
@@ -102,7 +112,22 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // 4. Fetch fresh menu with deduplication
+        // 4. Check chain-level cache (shared across all locations of same restaurant)
+        const chainMenu = await getCachedChainMenu(spot.name);
+        if (chainMenu) {
+            console.log(`Chain cache hit for "${spot.name}" (spot ${spotId})`);
+            // Also cache under this spot's ID for faster next lookup
+            const spotMenu: Menu = { ...chainMenu, spot_id: spotId, source: 'cached' };
+            await cacheMenu(spotId, spotMenu);
+            return NextResponse.json<MenuResponse>({
+                success: true,
+                menu: spotMenu,
+                cached: true,
+                message: `Menu loaded from chain cache (${spot.name})`,
+            });
+        }
+
+        // 5. Fetch fresh menu with deduplication
         const fetchPromise = (async (): Promise<MenuResponse> => {
             console.log(`Fetching fresh menu for ${spotId}: ${spot.name}`);
             const menu = await fetchMenu(
@@ -121,10 +146,11 @@ export async function GET(request: NextRequest) {
                 };
             }
 
-            // 5. Cache in Redis (1-hour TTL)
+            // 6. Cache in Redis (per-spot 1hr + chain-level 6hr)
             await cacheMenu(spotId, menu);
+            await cacheChainMenu(spot.name, menu);
 
-            // 6. Persist to Supabase
+            // 7. Persist to Supabase
             const { error: upsertError } = await supabase
                 .from('menus')
                 .upsert({

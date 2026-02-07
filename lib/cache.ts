@@ -211,13 +211,39 @@ export async function getCacheStats(): Promise<{
 // Menu Caching
 // ===========================================
 
-// Menu cache TTL (1 hour)
+// Menu cache TTL (1 hour for individual spots)
 const MENU_TTL = 60 * 60;
 
+// Chain menu cache TTL (6 hours — chain menus rarely change)
+const CHAIN_MENU_TTL = 6 * 60 * 60;
+
 /**
- * Cache key for menus
+ * Cache key for menus (per-spot)
  */
 const menuKey = (spotId: string) => `menu:${spotId}`;
+
+/**
+ * Cache key for chain menus (shared across all locations of the same chain)
+ */
+const chainMenuKey = (name: string) => `menu:chain:${normalizeChainName(name)}`;
+
+/**
+ * Normalize restaurant name for chain-level cache matching
+ * "Buffalo Wild Wings" → "buffalo wild wings"
+ * "Wingstop #1234" → "wingstop"
+ * "The Original Hot Wings" → "original hot wings"
+ */
+function normalizeChainName(name: string): string {
+    return name
+        .toLowerCase()
+        .trim()
+        .replace(/\s*#\d+.*$/, '')        // Strip "#1234" store numbers
+        .replace(/\s*-\s*.*$/, '')          // Strip " - Downtown" suffixes
+        .replace(/^the\s+/, '')             // Strip leading "The"
+        .replace(/['']/g, '')               // Strip apostrophes
+        .replace(/\s+/g, ' ')              // Collapse whitespace
+        .trim();
+}
 
 /**
  * Get cached menu for a spot
@@ -253,6 +279,40 @@ export async function invalidateMenuCache(spotId: string): Promise<void> {
         await redis.del(menuKey(spotId));
     } catch (error) {
         console.error('Redis invalidateMenuCache error:', error);
+    }
+}
+
+// ===========================================
+// Chain-Level Menu Caching
+// ===========================================
+
+/**
+ * Get cached menu for a chain restaurant by name
+ * e.g., any "Wingstop" location shares the same cached menu
+ */
+export async function getCachedChainMenu(name: string): Promise<Menu | null> {
+    if (!redis) return null;
+    try {
+        const key = chainMenuKey(name);
+        return await redis.get<Menu>(key);
+    } catch (error) {
+        console.error('Redis getCachedChainMenu error:', error);
+        return null;
+    }
+}
+
+/**
+ * Cache menu under the chain name (6-hour TTL)
+ * All locations of the same restaurant chain share this cache
+ */
+export async function cacheChainMenu(name: string, menu: Menu): Promise<void> {
+    if (!redis) return;
+    try {
+        const key = chainMenuKey(name);
+        await redis.set(key, menu, { ex: CHAIN_MENU_TTL });
+        console.log(`Cached chain menu: ${key}`);
+    } catch (error) {
+        console.error('Redis cacheChainMenu error:', error);
     }
 }
 

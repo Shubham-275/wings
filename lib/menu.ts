@@ -136,9 +136,22 @@ If the menu is not available on Google Maps, try clicking any linked website or 
             return null;
         }
 
-        const data = result.data as { sections?: Array<{ name: string; items: unknown[] }> };
+        // Mino can return result as a JSON string or a parsed object — handle both
+        let parsed: unknown = result.data;
+        console.log(`Mino menu scrape: result.data type = ${typeof parsed}`);
+        if (typeof parsed === 'string') {
+            try {
+                parsed = JSON.parse(parsed);
+                console.log('Mino menu scrape: Parsed string result to object');
+            } catch {
+                console.log('Mino menu scrape: Failed to parse string result as JSON');
+                return null;
+            }
+        }
+
+        const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
         if (!data.sections || data.sections.length === 0) {
-            console.log('Mino menu scrape: No sections found in response');
+            console.log('Mino menu scrape: No sections found in response', JSON.stringify(data).substring(0, 200));
             return null;
         }
 
