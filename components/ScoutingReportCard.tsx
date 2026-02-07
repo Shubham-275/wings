@@ -2,16 +2,16 @@
 
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Clock, MapPin, Phone, ExternalLink, Truck, ArrowRight, DollarSign } from 'lucide-react';
-import { WingSpot, FlavorPersona } from '@/lib/types';
+import { Clock, MapPin, Phone, ExternalLink, Truck, DollarSign } from 'lucide-react';
+import { WingSpot } from '@/lib/types';
 import {
     getStatusColorClass,
     getStatusEmoji,
     formatRelativeTime,
+    formatDeliveryTime,
     getGoogleMapsUrl,
     getOrderSearchUrl,
     getTelLink,
-    getFlavorPersona,
     cn,
 } from '@/lib/utils';
 
@@ -43,9 +43,6 @@ function calculateDraftGrade(spot: WingSpot): { grade: string; color: string; bg
     if (spot.status === 'green') score += 15;
     else if (spot.status === 'yellow') score += 5;
     else score -= 15;
-
-    // Flavor match
-    if (spot.flavor_match) score += Math.floor(spot.flavor_match / 10);
 
     // Clamp 0-100
     score = Math.max(0, Math.min(100, score));
@@ -124,26 +121,22 @@ function ShakyCircleSVG({ width, height }: { width: number; height: number }) {
 interface ScoutingReportCardProps {
     spot: WingSpot;
     index: number;
-    flavor: FlavorPersona | null;
     isBestDeal: boolean;
 }
 
-export function ScoutingReportCard({ spot, index, flavor, isBestDeal }: ScoutingReportCardProps) {
+export function ScoutingReportCard({ spot, index, isBestDeal }: ScoutingReportCardProps) {
     const [isHovered, setIsHovered] = useState(false);
     const cardRef = useRef<HTMLDivElement>(null);
 
     const draftGrade = calculateDraftGrade(spot);
     const restaurantType = getRestaurantType(spot);
-    const flavorMatch = spot.flavor_match ?? 0;
-    const persona = flavor ? getFlavorPersona(flavor) : null;
     const isSoldOut = spot.status === 'red' && !spot.is_in_stock;
     const priceStr = spot.price_per_wing !== null ? `$${spot.price_per_wing.toFixed(2)}/WING` : 'MARKET PRICE';
     const isGoodPrice = spot.price_per_wing !== null && spot.price_per_wing <= 1.5;
 
-    // Distance satirical label
     const deliveryStr = spot.delivery_time_mins !== null
-        ? `${spot.delivery_time_mins} YARDS AWAY`
-        : 'UNDISCLOSED LOCATION';
+        ? formatDeliveryTime(spot.delivery_time_mins)
+        : 'N/A';
 
     // Polaroid caption
     const scoutDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
@@ -237,20 +230,6 @@ export function ScoutingReportCard({ spot, index, flavor, isBestDeal }: Scouting
                             {spot.name.toUpperCase()}
                         </h3>
 
-                        {/* Flavor match badge */}
-                        {persona && flavorMatch > 0 && (
-                            <div
-                                className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded text-[9px] font-bold tracking-wider"
-                                style={{
-                                    background: `${persona.color}12`,
-                                    color: persona.color,
-                                    border: `1px solid ${persona.color}25`,
-                                }}
-                            >
-                                {persona.emoji} {flavorMatch}% MATCH
-                            </div>
-                        )}
-
                         {/* Deal highlight */}
                         {spot.deal_text && (
                             <motion.div
@@ -259,7 +238,7 @@ export function ScoutingReportCard({ spot, index, flavor, isBestDeal }: Scouting
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ delay: index * 0.08 + 0.2 }}
                             >
-                                <span className="text-[10px] font-marker text-stadium-green leading-tight">
+                                <span className="text-[10px] font-marker text-green-800 leading-tight">
                                     🏷️ {spot.deal_text}
                                 </span>
                             </motion.div>
@@ -270,48 +249,50 @@ export function ScoutingReportCard({ spot, index, flavor, isBestDeal }: Scouting
                 {/* ===== Satirical Stat Lines ===== */}
                 <div className="space-y-2 pt-1 border-t border-dashed border-amber-300/40">
                     {/* Salary Cap Hit (Price) */}
-                    <div className="relative flex items-center justify-between">
+                    <div className="flex items-center justify-between">
                         <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1">
                             <DollarSign className="w-3 h-3" /> SALARY CAP HIT
                         </span>
-                        <span className={cn(
-                            'font-marker text-sm font-bold',
-                            isGoodPrice ? 'text-stadium-green' : 'text-red-600'
-                        )}>
-                            {priceStr}
-                        </span>
+                        <span className="relative">
+                            <span className={cn(
+                                'font-marker text-sm font-bold',
+                                isGoodPrice ? 'text-green-800' : 'text-red-600'
+                            )}>
+                                {priceStr}
+                            </span>
 
-                        {/* Red circle annotation on hover — highlights the price */}
-                        <AnimatePresence>
-                            {isHovered && isGoodPrice && (
-                                <motion.div
-                                    className="absolute -right-2 -top-1 pointer-events-none"
-                                    initial={{ opacity: 0 }}
-                                    animate={{ opacity: 1 }}
-                                    exit={{ opacity: 0 }}
-                                >
-                                    <ShakyCircleSVG width={110} height={30} />
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
+                            {/* Red circle annotation on hover — highlights the price */}
+                            <AnimatePresence>
+                                {isHovered && isGoodPrice && (
+                                    <motion.div
+                                        className="absolute -inset-x-2 -inset-y-1 pointer-events-none"
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        exit={{ opacity: 0 }}
+                                    >
+                                        <ShakyCircleSVG width={100} height={28} />
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </span>
                     </div>
 
-                    {/* Endzone Distance (Delivery) */}
+                    {/* Delivery Time */}
                     <div className="flex items-center justify-between">
                         <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> ENDZONE DISTANCE
+                            <Clock className="w-3 h-3" /> DELIVERY TIME
                         </span>
-                        <span className="font-marker text-[11px] text-gray-700 flex items-center gap-1">
-                            {deliveryStr} <ArrowRight className="w-3 h-3" />
+                        <span className="font-marker text-[11px] text-gray-700">
+                            {deliveryStr}
                         </span>
                     </div>
 
                     {/* Location */}
-                    <div className="flex items-center justify-between">
-                        <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1">
-                            <MapPin className="w-3 h-3" /> FIELD POSITION
+                    <div className="flex items-start justify-between gap-2">
+                        <span className="font-marker text-[11px] text-gray-500 flex items-center gap-1 shrink-0">
+                            <MapPin className="w-3 h-3" /> LOCATION
                         </span>
-                        <span className="text-[9px] text-gray-400 truncate max-w-[50%] text-right">
+                        <span className="text-[9px] text-gray-500 text-right leading-tight">
                             {spot.address || 'TBD'}
                         </span>
                     </div>

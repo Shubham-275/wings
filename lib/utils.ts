@@ -205,7 +205,7 @@ export function getStatusEmoji(status: WingStatus): string {
 export function getStatusColorClass(status: WingStatus): string {
     switch (status) {
         case 'green': return 'text-wing-green bg-wing-green/20';
-        case 'yellow': return 'text-wing-yellow bg-wing-yellow/20';
+        case 'yellow': return 'text-amber-800 bg-amber-100';
         case 'red': return 'text-wing-red bg-wing-red/20';
         default: return 'text-gray-400 bg-gray-400/20';
     }

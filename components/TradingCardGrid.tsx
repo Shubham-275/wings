@@ -2,13 +2,12 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import { WingSpot, FlavorPersona } from '@/lib/types';
+import { WingSpot } from '@/lib/types';
 import { ScoutingReportCard } from '@/components/ScoutingReportCard';
 
 interface TradingCardGridProps {
     spots: WingSpot[];
     isLoading: boolean;
-    flavor: FlavorPersona | null;
 }
 
 // ===========================================
@@ -81,8 +80,6 @@ function findBestDealIndex(spots: WingSpot[]): number {
         }
         if (spot.status === 'green') score += 15;
         else if (spot.status === 'yellow') score += 5;
-        if (spot.flavor_match) score += Math.floor(spot.flavor_match / 10);
-
         if (score > bestScore) {
             bestScore = score;
             bestIdx = idx;
@@ -96,7 +93,7 @@ function findBestDealIndex(spots: WingSpot[]): number {
 // ===========================================
 // Main Grid Component
 // ===========================================
-export function TradingCardGrid({ spots, isLoading, flavor }: TradingCardGridProps) {
+export function TradingCardGrid({ spots, isLoading }: TradingCardGridProps) {
     if (isLoading) {
         return (
             <div>
@@ -118,11 +115,9 @@ export function TradingCardGrid({ spots, isLoading, flavor }: TradingCardGridPro
         return null;
     }
 
-    // Sort: highest flavor match first, then by status
+    // Sort by status (green > yellow > red)
     const statusOrder: Record<string, number> = { green: 0, yellow: 1, red: 2 };
     const sorted = [...spots].sort((a, b) => {
-        const matchDiff = (b.flavor_match ?? 0) - (a.flavor_match ?? 0);
-        if (matchDiff !== 0) return matchDiff;
         return (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
     });
 
@@ -171,7 +166,6 @@ export function TradingCardGrid({ spots, isLoading, flavor }: TradingCardGridPro
                             <ScoutingReportCard
                                 spot={spot}
                                 index={index}
-                                flavor={flavor}
                                 isBestDeal={index === bestDealIdx}
                             />
                         </motion.div>

@@ -250,7 +250,6 @@ function WingCommandContent() {
                                 <TradingCardGrid
                                     spots={spots}
                                     isLoading={isSearching && spots.length === 0}
-                                    flavor={flavor}
                                 />
 
                                 {!isSearching && spots.length === 0 && data?.message && (
