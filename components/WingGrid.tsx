@@ -3,7 +3,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Clock, MapPin, Star, ExternalLink, Phone, Tag } from 'lucide-react';
-import { WingSpot, FlavorPersona } from '@/lib/types';
+import { WingSpot } from '@/lib/types';
 import {
     formatPrice,
     formatDeliveryTime,
@@ -14,19 +14,15 @@ import {
     getGoogleMapsUrl,
     getOrderSearchUrl,
     getTelLink,
-    getFlavorPersona,
     cn,
 } from '@/lib/utils';
 
 interface WingGridProps {
     spots: WingSpot[];
     isLoading: boolean;
-    flavor: FlavorPersona | null;
 }
 
-function ScoutCard({ spot, index, flavor }: { spot: WingSpot; index: number; flavor: FlavorPersona | null }) {
-    const flavorMatch = spot.flavor_match ?? 0;
-    const persona = flavor ? getFlavorPersona(flavor) : null;
+function ScoutCard({ spot, index }: { spot: WingSpot; index: number }) {
 
     return (
         <motion.div
@@ -59,21 +55,6 @@ function ScoutCard({ spot, index, flavor }: { spot: WingSpot; index: number; fla
                                  ${getStatusColorClass(spot.status)} border border-current/20`}>
                     {getStatusEmoji(spot.status)} {spot.status === 'green' ? 'SCOUTED' : spot.status === 'yellow' ? 'AVAILABLE' : 'CLOSED'}
                 </div>
-
-                {/* Flavor match badge */}
-                {persona && flavorMatch > 0 && (
-                    <div
-                        className="absolute top-3 right-3 px-2.5 py-1 rounded-full text-xs font-bold"
-                        style={{
-                            background: `${persona.color}20`,
-                            color: persona.color,
-                            borderColor: `${persona.color}40`,
-                            borderWidth: 1,
-                        }}
-                    >
-                        {persona.emoji} {flavorMatch}%
-                    </div>
-                )}
 
                 {/* Dark gradient overlay */}
                 <div className="absolute inset-0 bg-gradient-to-t from-turf-black/80 via-transparent to-transparent" />
@@ -174,7 +155,7 @@ function SkeletonCard() {
     );
 }
 
-export function WingGrid({ spots, isLoading, flavor }: WingGridProps) {
+export function WingGrid({ spots, isLoading }: WingGridProps) {
     if (isLoading) {
         return (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-5">
@@ -189,11 +170,9 @@ export function WingGrid({ spots, isLoading, flavor }: WingGridProps) {
         return null;
     }
 
-    // Sort: highest flavor match first, then by status (green > yellow > red)
+    // Sort by status (green > yellow > red)
     const statusOrder: Record<string, number> = { green: 0, yellow: 1, red: 2 };
     const sorted = [...spots].sort((a, b) => {
-        const matchDiff = (b.flavor_match ?? 0) - (a.flavor_match ?? 0);
-        if (matchDiff !== 0) return matchDiff;
         return (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
     });
 
@@ -221,7 +200,6 @@ export function WingGrid({ spots, isLoading, flavor }: WingGridProps) {
                         key={spot.id}
                         spot={spot}
                         index={index}
-                        flavor={flavor}
                     />
                 ))}
             </div>
