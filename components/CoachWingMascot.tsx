@@ -44,7 +44,7 @@ function getMascotLabelColor(state: MascotState): string {
     switch (state) {
         case 'heat': return 'text-red-500/60';
         case 'drool': return 'text-yellow-600/60';
-        case 'happy': return 'text-stadium-green/60';
+        case 'happy': return 'text-white/60';
         default: return 'text-chalk-light/50';
     }
 }

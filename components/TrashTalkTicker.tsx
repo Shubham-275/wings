@@ -81,8 +81,8 @@ export function TrashTalkTicker({ isActive, flavor }: TrashTalkTickerProps) {
         >
             <div className="relative">
                 {/* "LIVE" badge */}
-                <div className="absolute -top-3 left-4 z-10 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-stadium-green text-white text-[10px] font-black tracking-wider">
-                    <span className="w-1.5 h-1.5 rounded-full bg-white animate-siren" />
+                <div className="absolute -top-3 left-4 z-10 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white text-stadium-green text-[10px] font-black tracking-wider shadow-md">
+                    <span className="w-1.5 h-1.5 rounded-full bg-stadium-green animate-siren" />
                     SCOUTING LIVE
                 </div>
 
@@ -109,7 +109,7 @@ export function TrashTalkTicker({ isActive, flavor }: TrashTalkTickerProps) {
                     {[0, 1, 2, 3, 4].map((i) => (
                         <motion.div
                             key={i}
-                            className="w-1.5 h-1.5 rounded-full bg-stadium-green"
+                            className="w-1.5 h-1.5 rounded-full bg-white"
                             animate={{
                                 opacity: [0.3, 1, 0.3],
                                 scale: [0.6, 1.5, 0.6],
