@@ -176,16 +176,18 @@ function WingCommandContent() {
         staleTime: CACHE_DURATION_MS,
     });
 
-    // Re-fetch once after 45s to pick up price_per_wing values from
-    // background menu scrapes (works for both cached and fresh responses)
+    // Re-fetch at 45s and 120s to pick up price data from background menu scrapes.
+    // Background scrapes take 30-120s; two refetches catch both fast and slow completions.
     useEffect(() => {
         if (data && data.spots.length > 0) {
-            const hasMissingPrices = data.spots.some(s => s.price_per_wing === null);
+            const hasMissingPrices = data.spots.some(s => s.price_per_wing === null && s.cheapest_item_price === null);
             if (hasMissingPrices) {
-                const timer = setTimeout(() => {
-                    refetch();
-                }, 45_000);
-                return () => clearTimeout(timer);
+                const timer45 = setTimeout(() => refetch(), 45_000);
+                const timer120 = setTimeout(() => refetch(), 120_000);
+                return () => {
+                    clearTimeout(timer45);
+                    clearTimeout(timer120);
+                };
             }
         }
     }, [data, refetch]);

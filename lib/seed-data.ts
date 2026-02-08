@@ -253,6 +253,7 @@ export function generateSeedData(
             lat: lat + jitterLat,
             lng: lng + jitterLng,
             price_per_wing: r.price_per_wing,
+            cheapest_item_price: null,
             deal_text: r.deal_text,
             delivery_time_mins: r.delivery_time_mins,
             wait_time_mins: null,

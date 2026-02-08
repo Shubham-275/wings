@@ -37,6 +37,7 @@ export interface WingSpot {
     lat: number;
     lng: number;
     price_per_wing: number | null;
+    cheapest_item_price: number | null;
     deal_text: string | null;
     delivery_time_mins: number | null;
     wait_time_mins: number | null;
@@ -141,6 +142,14 @@ export interface PlatformIds {
 export interface MenuSection {
     name: string;
     items: MenuItem[];
+}
+
+/**
+ * Result from getCheapestWingPrice() — both per-wing and raw item price
+ */
+export interface WingPriceResult {
+    price_per_wing: number | null;      // Calculated per-wing price (e.g., $1.30)
+    cheapest_item_price: number | null;  // Raw cheapest menu item price (e.g., $12.99)
 }
 
 /**

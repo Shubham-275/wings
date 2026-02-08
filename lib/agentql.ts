@@ -306,6 +306,7 @@ function processRestaurants(
 
     for (const restaurant of restaurants) {
         const pricePerWing: number | null = null;
+        const cheapestItemPrice: number | null = null;
         const dealText: string | null = null;
 
         let deliveryMins: number | null = null;
@@ -329,6 +330,7 @@ function processRestaurants(
             lat: lat + (Math.random() - 0.5) * 0.02,
             lng: lng + (Math.random() - 0.5) * 0.02,
             price_per_wing: pricePerWing,
+            cheapest_item_price: cheapestItemPrice,
             deal_text: dealText,
             delivery_time_mins: deliveryMins,
             wait_time_mins: null,

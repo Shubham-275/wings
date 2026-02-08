@@ -30,7 +30,7 @@ function cleanupInFlightRequests() {
 }
 
 const VALID_FLAVORS: FlavorPersona[] = ['face-melter', 'classicist', 'sticky-finger'];
-const MAX_AUTO_SCRAPES = 5; // Limit auto-triggered menu scrapes to conserve Mino API calls
+const MAX_AUTO_SCRAPES = 10; // Auto-scrape top 10 spots for price data
 
 /**
  * Enrich spots with wing prices from multiple sources:
@@ -41,7 +41,7 @@ const MAX_AUTO_SCRAPES = 5; // Limit auto-triggered menu scrapes to conserve Min
 async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
     const enriched = [...spots];
     const allIds = enriched.map((s, i) => ({ id: s.id, idx: i }));
-    const missingPriceIds = allIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    const missingPriceIds = allIds.filter(({ idx }) => enriched[idx].price_per_wing === null && enriched[idx].cheapest_item_price === null);
     const missingPhoneIds = allIds.filter(({ idx }) => !enriched[idx].phone);
 
     if (missingPriceIds.length === 0 && missingPhoneIds.length === 0) return enriched;
@@ -52,9 +52,13 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
             try {
                 const cachedMenu = await getCachedMenu(id);
                 if (cachedMenu?.sections) {
-                    const price = getCheapestWingPrice(cachedMenu.sections);
-                    if (price !== null) {
-                        enriched[idx] = { ...enriched[idx], price_per_wing: price };
+                    const result = getCheapestWingPrice(cachedMenu.sections);
+                    if (result.price_per_wing !== null || result.cheapest_item_price !== null) {
+                        enriched[idx] = {
+                            ...enriched[idx],
+                            price_per_wing: result.price_per_wing ?? enriched[idx].price_per_wing,
+                            cheapest_item_price: result.cheapest_item_price ?? enriched[idx].cheapest_item_price,
+                        };
                     }
                 }
             } catch { /* ignore */ }
@@ -63,7 +67,7 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
     }
 
     // Step 2: Check Supabase wing_spots for prices AND phone numbers
-    const needsPriceFromDb = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    const needsPriceFromDb = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null && enriched[idx].cheapest_item_price === null);
     const idsToQuery = new Set([
         ...needsPriceFromDb.map(m => m.id),
         ...missingPhoneIds.map(m => m.id),
@@ -74,7 +78,7 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
             const supabase = createServerClient();
             const { data: dbRows } = await supabase
                 .from('wing_spots')
-                .select('id, price_per_wing, phone, address')
+                .select('id, price_per_wing, cheapest_item_price, phone, address')
                 .in('id', Array.from(idsToQuery));
 
             if (dbRows) {
@@ -82,9 +86,13 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
                 for (const { id, idx } of allIds) {
                     const dbRow = dbMap.get(id);
                     if (!dbRow) continue;
-                    // Enrich price
+                    // Enrich per-wing price
                     if (enriched[idx].price_per_wing === null && dbRow.price_per_wing !== null) {
                         enriched[idx] = { ...enriched[idx], price_per_wing: dbRow.price_per_wing };
+                    }
+                    // Enrich cheapest item price
+                    if (enriched[idx].cheapest_item_price === null && dbRow.cheapest_item_price !== null) {
+                        enriched[idx] = { ...enriched[idx], cheapest_item_price: dbRow.cheapest_item_price };
                     }
                     // Enrich phone
                     if (!enriched[idx].phone && dbRow.phone) {
@@ -100,7 +108,7 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
     }
 
     // Step 3: For STILL remaining price nulls, check Supabase menus table
-    const stillMissing2 = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    const stillMissing2 = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null && enriched[idx].cheapest_item_price === null);
     if (stillMissing2.length > 0 && stillMissing2.length <= 10) {
         try {
             const supabase = createServerClient();
@@ -113,9 +121,13 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
                 for (const dbMenu of dbMenus) {
                     const match = stillMissing2.find(m => m.id === dbMenu.spot_id);
                     if (match && dbMenu.sections) {
-                        const price = getCheapestWingPrice(dbMenu.sections as MenuSection[]);
-                        if (price !== null) {
-                            enriched[match.idx] = { ...enriched[match.idx], price_per_wing: price };
+                        const result = getCheapestWingPrice(dbMenu.sections as MenuSection[]);
+                        if (result.price_per_wing !== null || result.cheapest_item_price !== null) {
+                            enriched[match.idx] = {
+                                ...enriched[match.idx],
+                                price_per_wing: result.price_per_wing ?? enriched[match.idx].price_per_wing,
+                                cheapest_item_price: result.cheapest_item_price ?? enriched[match.idx].cheapest_item_price,
+                            };
                         }
                     }
                 }

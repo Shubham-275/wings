@@ -5,7 +5,7 @@
 // ===========================================
 
 import axios from 'axios';
-import { Menu, MenuSection, MenuItem, PlatformIds, AgentQLResponse } from './types';
+import { Menu, MenuSection, MenuItem, PlatformIds, AgentQLResponse, WingPriceResult } from './types';
 import { executeMinoMenuScrape, executeMinoScrape } from './agentql';
 import { cacheMenu, cacheChainMenu, clearScoutingLock } from './cache';
 import { createServerClient } from './supabase';
@@ -96,37 +96,41 @@ async function fetchYelpMenu(
 
 function getWingsOnlyGoal(hasDirectUrl: boolean): string {
     if (hasDirectUrl) {
-        return `Navigate to this restaurant page. Find chicken wing menu items AND the restaurant's phone number and address.
+        return `Navigate to this restaurant page. Find the menu and extract chicken wing items with prices.
 
-IMPORTANT: You MUST return ONLY a JSON object in this EXACT format — no other text:
-{"sections": [{"name": "Wings", "items": [{"name": "10pc Wings", "price": 12.99, "quantity": 10}]}], "phone": "+11234567890", "address": "123 Main St, City, ST 12345"}
+IMPORTANT: Return ONLY a JSON object in this EXACT format:
+{"sections": [{"name": "Wings", "items": [{"name": "10pc Wings", "price": 12.99, "quantity": 10}]}], "phone": "+11234567890", "address": "123 Main St"}
 
-Wing keywords: wings, buffalo wings, boneless wings, bone-in wings, tenders, chicken tenders, nuggets, drumettes, wing combo, wing deal, wing bucket.
-SKIP everything else (burgers, fries, drinks, desserts, salads, sandwiches).
+Look for these items (in priority order):
+1. Wings, buffalo wings, boneless wings, bone-in wings, hot wings, wing combo, wing bucket, wing platter
+2. Tenders, chicken tenders, chicken strips, chicken fingers, nuggets, drumettes
+3. ANY chicken item with a price (chicken sandwich, fried chicken, chicken basket, etc.)
+4. If still nothing, get the cheapest appetizer or starter with a price
 
 Each item needs: name (string), price (number without $), quantity (number if mentioned like "10 pc").
-Group items into sections by type (e.g. "Wings", "Tenders", "Combos").
+Group into sections by type (e.g. "Wings", "Tenders", "Chicken", "Appetizers").
 
-For phone: Look for a phone number on the page (often in store info, footer, or contact section). Include country code.
-For address: Look for the restaurant's street address (often near a map or in store info).
-If phone or address is not visible, omit those fields.
+For phone: Look for a phone number on the page. Include country code.
+For address: Look for the restaurant's street address.
+If phone/address not visible, omit those fields.
 
-If the menu is not visible or NO wing items exist, return exactly: {"sections": [], "phone": "", "address": ""}
-
-CRITICAL: Return ONLY the JSON object. No notes, no descriptions, no explanations.`;
+If the menu is not visible at all, return: {"sections": [], "phone": "", "address": ""}
+Return ONLY the JSON object. No notes, no descriptions.`;
     }
 
-    return `Find this restaurant on Google Maps. Click on it, look for a Menu tab/section.
+    return `Find this restaurant on Google Maps. Click on it, look for a Menu tab/section or Overview with prices.
 
-IMPORTANT: You MUST return ONLY a JSON object in this EXACT format — no other text:
+Return ONLY a JSON object:
 {"sections": [{"name": "Wings", "items": [{"name": "Buffalo Wings", "price": 12.99, "quantity": 10}]}]}
 
-Find ONLY wing items: wings, buffalo, boneless, bone-in, tenders, nuggets, drumettes.
-Each item needs: name (string), price (number without $), quantity (number if listed).
+Look for (priority order):
+1. Wing items: wings, buffalo, boneless, bone-in, hot wings, wing platter
+2. Chicken items: tenders, strips, nuggets, drumettes, fried chicken
+3. ANY food item with a visible price
 
-If no wing items found, return exactly: {"sections": []}
-
-CRITICAL: Return ONLY the JSON object. No notes, no prose, no status messages. Be fast.`;
+Each item: name (string), price (number without $), quantity (number if listed).
+If no menu/prices found, return: {"sections": []}
+Return ONLY the JSON. Be fast.`;
 }
 
 // ===========================================
@@ -591,46 +595,51 @@ function detectDeal(name: string, description?: string): boolean {
 }
 
 /**
- * Get the cheapest price per wing from menu sections.
- * Scans all wing items across all sections for the lowest price_per_wing.
- * Also considers raw item prices for items with "wing" in the name but no quantity.
+ * Get the cheapest price per wing AND cheapest raw item price from menu sections.
+ * Returns both so we can display per-wing price when available, or raw item price as fallback.
  */
-export function getCheapestWingPrice(sections: MenuSection[]): number | null {
-    const WING_KEYWORDS = ['wing', 'wings', 'buffalo', 'boneless', 'drumette'];
-    let cheapest: number | null = null;
+export function getCheapestWingPrice(sections: MenuSection[]): WingPriceResult {
+    const WING_KEYWORDS = ['wing', 'wings', 'buffalo', 'boneless', 'drumette', 'tender', 'nugget', 'chicken'];
+    let cheapestPerWing: number | null = null;
+    let cheapestItem: number | null = null;
 
     for (const section of sections) {
         for (const item of section.items) {
-            // Check price_per_wing if available
+            // Track cheapest per-wing price (pre-calculated)
             if (item.price_per_wing && item.price_per_wing > 0) {
-                if (cheapest === null || item.price_per_wing < cheapest) {
-                    cheapest = item.price_per_wing;
+                if (cheapestPerWing === null || item.price_per_wing < cheapestPerWing) {
+                    cheapestPerWing = item.price_per_wing;
                 }
             }
-            // Fallback: if item is a wing item with a reasonable price but no per-wing calc,
-            // use the raw price as an approximation (e.g., "6 Wings $8.99" → ~$1.50/wing)
-            else if (item.price && item.price > 0 && item.price < 50) {
+
+            // Track any item with a price
+            if (item.price && item.price > 0 && item.price < 100) {
+                // For wing-related items, try quantity extraction for per-wing calc
                 const text = (item.name + ' ' + (item.description || '')).toLowerCase();
                 if (WING_KEYWORDS.some(kw => text.includes(kw))) {
-                    // Try to extract quantity from name
                     const match = item.name.match(/(\d+)\s*(pc|piece|wing|ct|count|pk)/i);
                     if (match) {
                         const qty = parseInt(match[1]);
                         if (qty > 0) {
                             const ppw = Math.round((item.price / qty) * 100) / 100;
-                            if (ppw > 0 && ppw < 10) { // sanity check
-                                if (cheapest === null || ppw < cheapest) {
-                                    cheapest = ppw;
+                            if (ppw > 0 && ppw < 10) {
+                                if (cheapestPerWing === null || ppw < cheapestPerWing) {
+                                    cheapestPerWing = ppw;
                                 }
                             }
                         }
                     }
                 }
+
+                // Always track raw item price as fallback
+                if (cheapestItem === null || item.price < cheapestItem) {
+                    cheapestItem = item.price;
+                }
             }
         }
     }
 
-    return cheapest;
+    return { price_per_wing: cheapestPerWing, cheapest_item_price: cheapestItem };
 }
 
 // ===========================================
@@ -688,12 +697,15 @@ export function startBackgroundMenuScrape(
                         fetched_at: menu.fetched_at,
                     }, { onConflict: 'spot_id' });
 
-                // Build update payload for wing_spots: price + phone + address
-                const cheapestPrice = getCheapestWingPrice(sections);
+                // Build update payload for wing_spots: prices + phone + address
+                const priceResult = getCheapestWingPrice(sections);
                 const updatePayload: Record<string, unknown> = {};
 
-                if (cheapestPrice !== null) {
-                    updatePayload.price_per_wing = cheapestPrice;
+                if (priceResult.price_per_wing !== null) {
+                    updatePayload.price_per_wing = priceResult.price_per_wing;
+                }
+                if (priceResult.cheapest_item_price !== null) {
+                    updatePayload.cheapest_item_price = priceResult.cheapest_item_price;
                 }
                 if (scrapedPhone) {
                     updatePayload.phone = scrapedPhone;
@@ -708,7 +720,7 @@ export function startBackgroundMenuScrape(
                         .update(updatePayload)
                         .eq('id', spotId);
                     const fields = Object.keys(updatePayload).join(', ');
-                    console.log(`Background scrape: Updated ${fields} for ${spotId}${cheapestPrice !== null ? ` (price=$${cheapestPrice.toFixed(2)})` : ''}${scrapedPhone ? ` (phone=${scrapedPhone})` : ''}`);
+                    console.log(`Background scrape: Updated ${fields} for ${spotId}${priceResult.price_per_wing !== null ? ` (ppw=$${priceResult.price_per_wing.toFixed(2)})` : ''}${priceResult.cheapest_item_price !== null ? ` (item=$${priceResult.cheapest_item_price.toFixed(2)})` : ''}${scrapedPhone ? ` (phone=${scrapedPhone})` : ''}`);
                 }
             } catch (dbErr) {
                 console.error('Background scrape: Supabase persist error:', dbErr);

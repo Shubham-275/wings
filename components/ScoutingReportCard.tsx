@@ -142,7 +142,12 @@ export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, is
     const draftGrade = calculateDraftGrade(spot);
     const restaurantType = getRestaurantType(spot);
     const isSoldOut = spot.status === 'red' && !spot.is_in_stock;
-    const priceStr = spot.price_per_wing !== null ? `$${spot.price_per_wing.toFixed(2)}/WING` : 'MARKET PRICE';
+    // Three-tier price display: per-wing → raw item price → market price
+    const priceStr = spot.price_per_wing !== null
+        ? `$${spot.price_per_wing.toFixed(2)}/WING`
+        : spot.cheapest_item_price !== null
+            ? `FROM $${spot.cheapest_item_price.toFixed(2)}`
+            : 'MARKET PRICE';
     const isGoodPrice = spot.price_per_wing !== null && spot.price_per_wing <= 1.5;
 
     const deliveryStr = spot.delivery_time_mins !== null
