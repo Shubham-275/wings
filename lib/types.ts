@@ -38,6 +38,8 @@ export interface WingSpot {
     lng: number;
     price_per_wing: number | null;
     cheapest_item_price: number | null;
+    estimated_price_per_wing?: number | null;  // Chain lookup or zip-average estimate
+    is_price_estimated?: boolean;               // True = price is an estimate, not real
     deal_text: string | null;
     delivery_time_mins: number | null;
     wait_time_mins: number | null;
