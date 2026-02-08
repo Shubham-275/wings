@@ -127,12 +127,12 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
 }
 
 /**
- * Fire-and-forget: trigger background menu scrapes for top spots with platform URLs.
+ * Fire-and-forget: trigger background menu scrapes for top non-red spots.
  * Uses Redis SET NX lock to prevent duplicates.
  */
 function autoTriggerMenuScrapes(spots: WingSpot[]): void {
     const eligible = spots
-        .filter(s => s.platform_ids?.source_url && s.status !== 'red')
+        .filter(s => s.status !== 'red')
         .slice(0, MAX_AUTO_SCRAPES);
 
     for (const spot of eligible) {
@@ -338,7 +338,7 @@ export async function GET(request: NextRequest) {
         await cacheScrapeResult(zipCode, result);
         log(`DONE: ${scrapedSpots.length} spots in ${Date.now() - t0}ms`);
 
-        // 7. Auto-trigger background menu scrapes for top spots with platform URLs
+        // 7. Auto-trigger background menu scrapes for top spots (any non-red spot)
         // This populates price_per_wing data without the user needing to open menus
         autoTriggerMenuScrapes(scrapedSpots);
         log(`Auto-triggered menu scrapes for up to ${MAX_AUTO_SCRAPES} spots`);

@@ -446,12 +446,15 @@ export async function scrapeMenuWithMino(
 ): Promise<MenuScrapeResult | null> {
     const scrape = scrapeFn || executeMinoMenuScrape;
 
-    // Determine best URL to scrape
+    // Determine best URL to scrape: platform URL > website URL > Google Maps fallback
     const hasDirectUrl = !!platformIds?.source_url;
+    const hasWebsiteUrl = !!platformIds?.website_url;
     const scrapeUrl = hasDirectUrl
         ? platformIds!.source_url!
-        : `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
-    const goal = getWingsOnlyGoal(hasDirectUrl);
+        : hasWebsiteUrl
+            ? platformIds!.website_url!
+            : `https://www.google.com/maps/search/${encodeURIComponent(name + ' ' + address)}`;
+    const goal = getWingsOnlyGoal(hasDirectUrl || hasWebsiteUrl);
 
     try {
         // First attempt: platform URL or Google Maps
@@ -460,7 +463,7 @@ export async function scrapeMenuWithMino(
         // If platform URL returned empty sections, try Google search as fallback
         // Only when we used a direct URL (don't loop if already on Google)
         // But preserve contact info from the first attempt
-        if (result !== null && result.sections.length === 0 && hasDirectUrl) {
+        if (result !== null && result.sections.length === 0 && (hasDirectUrl || hasWebsiteUrl)) {
             console.log(`Mino wing scrape: platform URL returned empty, trying Google search for "${name}"...`);
             const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(name + ' menu wings')}`;
             const googleGoal = getWingsOnlyGoal(false);
