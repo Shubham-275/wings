@@ -3,7 +3,7 @@
 // ===========================================
 
 import { Redis } from '@upstash/redis';
-import { WingSpot, GeocodedLocation, ScrapeResponse, Menu, SuperBowlDeal } from './types';
+import { WingSpot, GeocodedLocation, ScrapeResponse, Menu, SuperBowlDeal, AggregatorDeal } from './types';
 
 // Validate Redis environment variables
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
@@ -375,7 +375,9 @@ export async function cacheChainMenu(name: string, menu: Menu): Promise<void> {
 // ===========================================
 
 const DEALS_TTL = 30 * 60; // 30 minutes
+const DEALS_SCOUTING_LOCK_TTL = 5 * 60; // 5 minutes (deals scrapes can take 200-400s for slow sites)
 const dealsKey = (spotId: string) => `deals:${spotId}`;
+const dealsScoutingKey = (spotId: string) => `deals:scouting:${spotId}`;
 
 /**
  * Get cached Super Bowl deals for a spot
@@ -399,6 +401,136 @@ export async function cacheDeals(spotId: string, deals: SuperBowlDeal[]): Promis
         await redis.set(dealsKey(spotId), deals, { ex: DEALS_TTL });
     } catch (error) {
         console.error('Redis cacheDeals error:', error);
+    }
+}
+
+// ===========================================
+// Deals Scouting Lock (Redis-based deduplication)
+// ===========================================
+
+/**
+ * Acquire a deals scouting lock (SET NX — atomic set-if-not-exists).
+ * Returns true if WE acquired the lock (first request).
+ * Returns false if another instance is already scouting deals for this spot.
+ */
+export async function setDealsScoutingLock(spotId: string): Promise<boolean> {
+    if (!redis) return true; // No Redis = allow (dev mode)
+    try {
+        const result = await redis.set(
+            dealsScoutingKey(spotId),
+            Date.now().toString(),
+            { nx: true, ex: DEALS_SCOUTING_LOCK_TTL }
+        );
+        return result === 'OK';
+    } catch (error) {
+        console.error('Redis setDealsScoutingLock error:', error);
+        return true; // Allow on error (graceful degradation)
+    }
+}
+
+/**
+ * Check if a deals scouting lock exists (another instance is scraping deals).
+ */
+export async function isDealsScoutingInProgress(spotId: string): Promise<boolean> {
+    if (!redis) return false;
+    try {
+        const val = await redis.get(dealsScoutingKey(spotId));
+        return val !== null;
+    } catch (error) {
+        console.error('Redis isDealsScoutingInProgress error:', error);
+        return false;
+    }
+}
+
+/**
+ * Clear the deals scouting lock after scrape completes (success or failure).
+ */
+export async function clearDealsScoutingLock(spotId: string): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.del(dealsScoutingKey(spotId));
+    } catch (error) {
+        console.error('Redis clearDealsScoutingLock error:', error);
+    }
+}
+
+// ===========================================
+// Global Aggregator Deals Cache
+// One scrape of deal roundup pages covers ALL chain restaurants
+// ===========================================
+
+const AGGREGATOR_TTL = 2 * 60 * 60; // 2 hours (aggregator pages rarely change intraday)
+const AGGREGATOR_SCOUTING_LOCK_TTL = 5 * 60; // 5 minutes (covers parallel scrape of 3 pages)
+const AGGREGATOR_KEY = 'deals:aggregator';
+const AGGREGATOR_SCOUTING_KEY = 'deals:aggregator:scouting';
+
+/**
+ * Get cached aggregator deals (global — not per-spot)
+ */
+export async function getCachedAggregatorDeals(): Promise<AggregatorDeal[] | null> {
+    if (!redis) return null;
+    try {
+        return await redis.get<AggregatorDeal[]>(AGGREGATOR_KEY);
+    } catch (error) {
+        console.error('Redis getCachedAggregatorDeals error:', error);
+        return null;
+    }
+}
+
+/**
+ * Cache aggregator deals globally (2-hour TTL)
+ */
+export async function cacheAggregatorDeals(deals: AggregatorDeal[]): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.set(AGGREGATOR_KEY, deals, { ex: AGGREGATOR_TTL });
+    } catch (error) {
+        console.error('Redis cacheAggregatorDeals error:', error);
+    }
+}
+
+/**
+ * Acquire global aggregator scouting lock (SET NX).
+ * Only one Railway instance scrapes aggregator pages at a time.
+ */
+export async function setAggregatorScoutingLock(): Promise<boolean> {
+    if (!redis) return true;
+    try {
+        const result = await redis.set(
+            AGGREGATOR_SCOUTING_KEY,
+            Date.now().toString(),
+            { nx: true, ex: AGGREGATOR_SCOUTING_LOCK_TTL }
+        );
+        return result === 'OK';
+    } catch (error) {
+        console.error('Redis setAggregatorScoutingLock error:', error);
+        return true;
+    }
+}
+
+/**
+ * Check if aggregator scouting is in progress.
+ */
+export async function isAggregatorScoutingInProgress(): Promise<boolean> {
+    if (!redis) return false;
+    try {
+        const val = await redis.get(AGGREGATOR_SCOUTING_KEY);
+        return val !== null;
+    } catch (error) {
+        console.error('Redis isAggregatorScoutingInProgress error:', error);
+        return false;
+    }
+}
+
+/**
+ * Clear the aggregator scouting lock.
+ */
+export async function clearAggregatorScoutingLock(): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.del(AGGREGATOR_SCOUTING_KEY);
+    } catch (error) {
+        console.error('Redis clearAggregatorScoutingLock error:', error);
     }
 }
 

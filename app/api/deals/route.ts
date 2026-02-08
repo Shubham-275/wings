@@ -1,22 +1,33 @@
 // ===========================================
 // Wing Scout — Super Bowl Deals API Endpoint
+// Aggregator-first: check global deals cache → fuzzy match → fallback
 // ===========================================
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/lib/supabase';
-import { getCachedDeals, cacheDeals } from '@/lib/cache';
-import { fetchSuperBowlDeals } from '@/lib/deals';
+import {
+    getCachedDeals,
+    cacheDeals,
+    getCachedAggregatorDeals,
+    setAggregatorScoutingLock,
+    isAggregatorScoutingInProgress,
+    setDealsScoutingLock,
+    isDealsScoutingInProgress,
+} from '@/lib/cache';
+import {
+    startBackgroundAggregatorScrape,
+    startBackgroundDealsScrape,
+    matchDealsToSpot,
+} from '@/lib/deals';
 import { DealsResponse } from '@/lib/types';
 
 export const runtime = 'nodejs';
-export const maxDuration = 120; // 2 minutes — enough for parallel website + Instagram scrape
-
-// In-flight request deduplication
-const inFlightRequests = new Map<string, Promise<DealsResponse>>();
+export const maxDuration = 300; // 5 minutes — Railway has no limit, but set generous max
 
 export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const spotId = searchParams.get('spot_id');
+    const isPoll = searchParams.get('poll') === 'true';
 
     if (!spotId) {
         return NextResponse.json<DealsResponse>(
@@ -25,22 +36,10 @@ export async function GET(request: NextRequest) {
         );
     }
 
-    // Check for in-flight request (deduplication)
-    const inFlightKey = `deals:${spotId}`;
-    if (inFlightRequests.has(inFlightKey)) {
-        try {
-            const result = await inFlightRequests.get(inFlightKey)!;
-            return NextResponse.json<DealsResponse>({
-                ...result,
-                message: result.message + ' (deduplicated)',
-            });
-        } catch {
-            inFlightRequests.delete(inFlightKey);
-        }
-    }
-
     try {
-        // 1. Check Redis cache first (30-min TTL)
+        // ===========================================
+        // Stage 1: Check per-spot Redis cache (30-min TTL)
+        // ===========================================
         const cachedDeals = await getCachedDeals(spotId);
         if (cachedDeals) {
             console.log(`Deals cache hit for ${spotId}: ${cachedDeals.length} deals`);
@@ -48,11 +47,15 @@ export async function GET(request: NextRequest) {
                 success: true,
                 deals: cachedDeals,
                 cached: true,
-                message: `${cachedDeals.length} Super Bowl deal(s) (cached)`,
+                message: cachedDeals.length > 0
+                    ? `${cachedDeals.length} Super Bowl deal(s) (cached)`
+                    : 'No Super Bowl specials found (cached)',
             });
         }
 
-        // 2. Look up spot details from Supabase
+        // ===========================================
+        // Stage 2: Look up spot details from Supabase
+        // ===========================================
         const supabase = createServerClient();
         const { data: spot, error: spotError } = await supabase
             .from('wing_spots')
@@ -68,36 +71,91 @@ export async function GET(request: NextRequest) {
             );
         }
 
-        // 3. Fetch deals with deduplication
-        const fetchPromise = (async (): Promise<DealsResponse> => {
-            console.log(`Fetching Super Bowl deals for ${spotId}: ${spot.name}`);
-            const deals = await fetchSuperBowlDeals(
-                spot.name,
-                spot.address,
-                spot.platform_ids,
-            );
+        // ===========================================
+        // Stage 3: Check global aggregator cache → fuzzy match
+        // ===========================================
+        const aggregatorDeals = await getCachedAggregatorDeals();
+        if (aggregatorDeals && aggregatorDeals.length > 0) {
+            // Aggregator data exists — try to match this spot
+            const matchedDeals = matchDealsToSpot(spot.name, aggregatorDeals);
 
-            // 4. Cache in Redis (30-min TTL)
-            await cacheDeals(spotId, deals);
+            if (matchedDeals.length > 0) {
+                // Chain match found — cache per-spot and return
+                console.log(`Aggregator match for ${spotId} (${spot.name}): ${matchedDeals.length} deals`);
+                await cacheDeals(spotId, matchedDeals);
+                return NextResponse.json<DealsResponse>({
+                    success: true,
+                    deals: matchedDeals,
+                    cached: false,
+                    message: `${matchedDeals.length} Super Bowl deal(s) found`,
+                });
+            }
 
-            return {
-                success: true,
-                deals,
-                cached: false,
-                message: deals.length > 0
-                    ? `Found ${deals.length} Super Bowl deal(s)`
-                    : 'No Super Bowl specials found for this restaurant',
-            };
-        })();
-
-        inFlightRequests.set(inFlightKey, fetchPromise);
-
-        try {
-            const result = await fetchPromise;
-            return NextResponse.json<DealsResponse>(result);
-        } finally {
-            inFlightRequests.delete(inFlightKey);
+            // No aggregator match — this is likely a local restaurant.
+            // Fall through to Stage 5 (website-only fallback) below.
+            console.log(`No aggregator match for ${spotId} (${spot.name}) — trying website fallback`);
         }
+
+        // ===========================================
+        // Stage 4: Poll handling
+        // ===========================================
+        if (isPoll) {
+            // Check if either aggregator or per-spot scouting is in progress
+            const aggScouting = await isAggregatorScoutingInProgress();
+            const spotScouting = await isDealsScoutingInProgress(spotId);
+            const anyScouting = aggScouting || spotScouting;
+
+            return NextResponse.json<DealsResponse>({
+                success: false,
+                deals: [],
+                cached: false,
+                scouting: anyScouting,
+                message: anyScouting
+                    ? 'Still scouting Super Bowl deals...'
+                    : 'No Super Bowl specials found',
+            });
+        }
+
+        // ===========================================
+        // Stage 5: Trigger background scrapes
+        // ===========================================
+
+        // If no aggregator cache at all → trigger global aggregator scrape
+        if (!aggregatorDeals) {
+            const gotAggLock = await setAggregatorScoutingLock();
+            if (gotAggLock) {
+                console.log('Launching background aggregator scrape (first request)');
+                startBackgroundAggregatorScrape();
+            } else {
+                console.log('Aggregator scrape already in progress');
+            }
+
+            return NextResponse.json<DealsResponse>({
+                success: false,
+                deals: [],
+                cached: false,
+                scouting: true,
+                message: 'Scouting Super Bowl deals...',
+            });
+        }
+
+        // Aggregator cache exists but no match (local restaurant)
+        // → trigger website-only fallback for this specific spot
+        const gotSpotLock = await setDealsScoutingLock(spotId);
+        if (gotSpotLock) {
+            console.log(`Launching website-only fallback for ${spotId}: ${spot.name}`);
+            startBackgroundDealsScrape(spotId, spot.name, spot.address, spot.platform_ids);
+        } else {
+            console.log(`Website fallback already in progress for ${spotId}`);
+        }
+
+        return NextResponse.json<DealsResponse>({
+            success: false,
+            deals: [],
+            cached: false,
+            scouting: true,
+            message: 'Scouting website for deals...',
+        });
     } catch (error) {
         console.error('Deals API error:', error);
         return NextResponse.json<DealsResponse>(

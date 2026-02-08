@@ -1,8 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Globe, Instagram, Copy, Check, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Globe, Instagram, Newspaper, Copy, Check, ExternalLink } from 'lucide-react';
 import { DealsResponse, SuperBowlDeal } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -12,25 +11,145 @@ interface DealsViewProps {
     enabled?: boolean;
 }
 
-export function DealsView({ spotId, spotName, enabled = true }: DealsViewProps) {
-    const { data, isLoading, error } = useQuery<DealsResponse>({
-        queryKey: ['deals', spotId],
-        queryFn: async () => {
-            const res = await fetch(`/api/deals?spot_id=${encodeURIComponent(spotId)}`);
-            if (!res.ok) throw new Error('Failed to fetch deals');
-            return res.json();
-        },
-        staleTime: 15 * 60 * 1000,
-        gcTime: 60 * 60 * 1000,
-        retry: 1,
-        enabled,
-    });
+// ===========================================
+// DealsView — Background scrape + polling pattern
+// Mirrors MenuModal polling approach
+// ===========================================
 
-    if (isLoading) {
+export function DealsView({ spotId, spotName, enabled = true }: DealsViewProps) {
+    const [data, setData] = useState<DealsResponse | null>(null);
+    const [loading, setLoading] = useState(false);
+    const [scouting, setScouting] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const hasFetched = useRef(false);
+    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    function stopPolling() {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
+    }
+
+    const startPolling = useCallback(() => {
+        stopPolling();
+        let pollCount = 0;
+        const maxPolls = 60; // 60 polls × 5s = 5 minutes max polling
+
+        pollRef.current = setInterval(async () => {
+            pollCount++;
+            if (pollCount > maxPolls) {
+                stopPolling();
+                setScouting(false);
+                setError('Deals scouting timed out. Try again later.');
+                return;
+            }
+
+            try {
+                // poll=true ensures NO new Mino scrapes are triggered
+                const res = await fetch(
+                    `/api/deals?spot_id=${encodeURIComponent(spotId)}&poll=true`
+                );
+                const result: DealsResponse = await res.json();
+
+                if (result.success && result.deals) {
+                    // Deals found (or confirmed empty) — stop polling
+                    stopPolling();
+                    setScouting(false);
+                    setData(result);
+                } else if (!result.scouting) {
+                    // Scouting finished but no deals cached — scrape completed with no results
+                    stopPolling();
+                    setScouting(false);
+                    setData(result);
+                }
+                // If still scouting, keep polling
+            } catch {
+                // Network error during poll — keep trying
+            }
+        }, 5000);
+    }, [spotId]);
+
+    const doFetch = useCallback(async () => {
+        if (!spotId) return;
+        setLoading(true);
+        setError(null);
+        setScouting(false);
+        stopPolling();
+
+        // 15-second client-side timeout for the initial request
+        // (API returns immediately with scouting:true, so this is plenty)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+        try {
+            const res = await fetch(
+                `/api/deals?spot_id=${encodeURIComponent(spotId)}`,
+                { signal: controller.signal }
+            );
+            clearTimeout(timeoutId);
+            const result: DealsResponse = await res.json();
+
+            if (result.success && result.deals) {
+                // Cache hit — deals returned immediately
+                setData(result);
+            } else if (result.scouting) {
+                // Background scrape started — poll every 5s for cached results
+                setScouting(true);
+                startPolling();
+            } else {
+                // No deals and not scouting
+                setData(result);
+            }
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err instanceof Error && err.name === 'AbortError') {
+                // Client timed out — server may still be working, start polling
+                setScouting(true);
+                startPolling();
+            } else {
+                setError('Failed to load deals');
+            }
+        } finally {
+            setLoading(false);
+        }
+    }, [spotId, startPolling]);
+
+    // Fetch ONCE when enabled — ref prevents re-trigger loops
+    useEffect(() => {
+        if (enabled && !hasFetched.current) {
+            hasFetched.current = true;
+            doFetch();
+        }
+        if (!enabled) {
+            hasFetched.current = false;
+            stopPolling();
+            setScouting(false);
+        }
+    }, [enabled, doFetch]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => stopPolling();
+    }, []);
+
+    if (loading) {
         return <DealsSkeleton />;
     }
 
-    if (error || !data?.success || data.deals.length === 0) {
+    if (scouting) {
+        return <DealsScoutingIndicator />;
+    }
+
+    if (error) {
+        return (
+            <div className="text-center py-2">
+                <p className="font-marker text-[10px] text-red-400">{error}</p>
+            </div>
+        );
+    }
+
+    if (!data?.success || data.deals.length === 0) {
         return (
             <div className="text-center py-2">
                 <p className="font-marker text-[10px] text-gray-400">
@@ -138,13 +257,15 @@ function DealCard({ deal }: { deal: SuperBowlDeal }) {
 
             {/* Source attribution */}
             <div className="flex items-center gap-1 pt-0.5">
-                {deal.source === 'website' ? (
+                {deal.source === 'aggregator' ? (
+                    <Newspaper className="w-2.5 h-2.5 text-gray-400" />
+                ) : deal.source === 'website' ? (
                     <Globe className="w-2.5 h-2.5 text-gray-400" />
                 ) : (
                     <Instagram className="w-2.5 h-2.5 text-gray-400" />
                 )}
                 <span className="text-[8px] text-gray-400">
-                    Found on {deal.source}
+                    {deal.source === 'aggregator' ? 'Found on deals roundup' : `Found on ${deal.source}`}
                 </span>
             </div>
         </div>
@@ -156,6 +277,25 @@ function DealsSkeleton() {
         <div className="space-y-2 animate-pulse">
             <div className="h-4 bg-amber-100/50 rounded w-32" />
             <div className="h-16 bg-amber-100/30 rounded border border-amber-200/30" />
+        </div>
+    );
+}
+
+function DealsScoutingIndicator() {
+    return (
+        <div className="text-center py-3">
+            <div className="flex justify-center gap-1 mb-1.5">
+                {[0, 1, 2].map(i => (
+                    <div
+                        key={i}
+                        className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse"
+                        style={{ animationDelay: `${i * 0.3}s` }}
+                    />
+                ))}
+            </div>
+            <p className="font-marker text-[10px] text-amber-600">
+                Scouting SB deals...
+            </p>
         </div>
     );
 }
