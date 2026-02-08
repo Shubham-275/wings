@@ -704,9 +704,8 @@ export function startBackgroundMenuScrape(
                 if (priceResult.price_per_wing !== null) {
                     updatePayload.price_per_wing = priceResult.price_per_wing;
                 }
-                if (priceResult.cheapest_item_price !== null) {
-                    updatePayload.cheapest_item_price = priceResult.cheapest_item_price;
-                }
+                // Note: cheapest_item_price is computed on-the-fly from menu cache,
+                // not persisted to Supabase (column may not exist yet)
                 if (scrapedPhone) {
                     updatePayload.phone = scrapedPhone;
                 }
@@ -720,7 +719,7 @@ export function startBackgroundMenuScrape(
                         .update(updatePayload)
                         .eq('id', spotId);
                     const fields = Object.keys(updatePayload).join(', ');
-                    console.log(`Background scrape: Updated ${fields} for ${spotId}${priceResult.price_per_wing !== null ? ` (ppw=$${priceResult.price_per_wing.toFixed(2)})` : ''}${priceResult.cheapest_item_price !== null ? ` (item=$${priceResult.cheapest_item_price.toFixed(2)})` : ''}${scrapedPhone ? ` (phone=${scrapedPhone})` : ''}`);
+                    console.log(`Background scrape: Updated ${fields} for ${spotId}${priceResult.price_per_wing !== null ? ` (ppw=$${priceResult.price_per_wing.toFixed(2)})` : ''}${scrapedPhone ? ` (phone=${scrapedPhone})` : ''}`);
                 }
             } catch (dbErr) {
                 console.error('Background scrape: Supabase persist error:', dbErr);

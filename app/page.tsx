@@ -180,7 +180,7 @@ function WingCommandContent() {
     // Background scrapes take 30-120s; two refetches catch both fast and slow completions.
     useEffect(() => {
         if (data && data.spots.length > 0) {
-            const hasMissingPrices = data.spots.some(s => s.price_per_wing === null && s.cheapest_item_price === null);
+            const hasMissingPrices = data.spots.some(s => s.price_per_wing == null && s.cheapest_item_price == null);
             if (hasMissingPrices) {
                 const timer45 = setTimeout(() => refetch(), 45_000);
                 const timer120 = setTimeout(() => refetch(), 120_000);

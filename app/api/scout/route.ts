@@ -78,7 +78,7 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
             const supabase = createServerClient();
             const { data: dbRows } = await supabase
                 .from('wing_spots')
-                .select('id, price_per_wing, cheapest_item_price, phone, address')
+                .select('id, price_per_wing, phone, address')
                 .in('id', Array.from(idsToQuery));
 
             if (dbRows) {
@@ -89,10 +89,6 @@ async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
                     // Enrich per-wing price
                     if (enriched[idx].price_per_wing === null && dbRow.price_per_wing !== null) {
                         enriched[idx] = { ...enriched[idx], price_per_wing: dbRow.price_per_wing };
-                    }
-                    // Enrich cheapest item price
-                    if (enriched[idx].cheapest_item_price === null && dbRow.cheapest_item_price !== null) {
-                        enriched[idx] = { ...enriched[idx], cheapest_item_price: dbRow.cheapest_item_price };
                     }
                     // Enrich phone
                     if (!enriched[idx].phone && dbRow.phone) {
