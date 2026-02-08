@@ -2,9 +2,9 @@
 
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Trophy, Clock, Tag } from 'lucide-react';
+import { X, Trophy, Clock, Tag, Phone } from 'lucide-react';
 import { WingSpot } from '@/lib/types';
-import { getPlatformLabel, getOrderUrl } from '@/lib/utils';
+import { getPlatformLabel, getOrderUrl, getTelLink } from '@/lib/utils';
 
 interface CompareModalProps {
     spots: WingSpot[];
@@ -187,6 +187,30 @@ export function CompareModal({ spots, isOpen, onClose }: CompareModalProps) {
                                                         {formatDelivery(spot.delivery_time_mins)}
                                                         {i === bestDeliveryIdx && spot.delivery_time_mins !== null && (
                                                             <span className="block text-[9px] text-stadium-green font-heading mt-0.5">FASTEST</span>
+                                                        )}
+                                                    </td>
+                                                ))}
+                                            </tr>
+
+                                            {/* Phone */}
+                                            <tr className="border-b border-amber-200/20">
+                                                <td className="py-2.5 px-2 font-marker text-[11px] text-gray-500 flex items-center gap-1">
+                                                    <Phone className="w-3 h-3" /> PHONE
+                                                </td>
+                                                {spots.map(spot => (
+                                                    <td
+                                                        key={spot.id}
+                                                        className="text-center py-2.5 px-2 text-xs"
+                                                    >
+                                                        {spot.phone ? (
+                                                            <a
+                                                                href={getTelLink(spot.phone)}
+                                                                className="text-stadium-green hover:underline font-heading text-[10px] tracking-wider"
+                                                            >
+                                                                {spot.phone}
+                                                            </a>
+                                                        ) : (
+                                                            <span className="text-gray-400 text-[10px]">—</span>
                                                         )}
                                                     </td>
                                                 ))}
