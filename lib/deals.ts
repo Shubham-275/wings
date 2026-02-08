@@ -288,22 +288,43 @@ async function scrapeWebsiteForDeals(
 ): Promise<SuperBowlDeal[]> {
     const url = websiteUrl || `https://www.google.com/search?q=${encodeURIComponent(`${name} ${address} super bowl specials game day deals`)}`;
 
-    const goal = `Visit this restaurant website and look for ANY Super Bowl specials, game day deals, pre-order information, party platters, catering specials, or limited-time promotions for Super Bowl Sunday (February 8, 2026).
-Check:
-- Homepage banners, popups, and hero sections
-- Special/Events/Promotions pages
-- Catering or Party pages
-- Any mention of: "Super Bowl", "game day", "big game", "SB", "special", "deal", "pre-order", "catering", "party platter", "wings special", "game day bundle"
+    const goal = websiteUrl
+        ? `Visit this restaurant website and look for ANY Super Bowl specials, game day deals, pre-order information, party platters, catering specials, or limited-time promotions for Super Bowl Sunday (February 8, 2026).
+Check: Homepage banners, popups, hero sections, Special/Events/Promotions pages, Catering or Party pages.
+Look for: "Super Bowl", "game day", "big game", "SB", "special", "deal", "pre-order", "catering", "party platter", "wings special", "game day bundle".
 
 Return a JSON object with a "deals" array. Each deal should have:
-- description (the full deal text, e.g. "50 wings for $39.99 - Super Bowl Special")
+- description (the full deal text, e.g. "$49.99 Big Game Special: 3 large pizzas + 20 wings")
 - promo_code (any promo/coupon code if mentioned)
-- pre_order_deadline (ordering deadline if mentioned, e.g. "Order by Feb 7 5PM")
-- pre_order_url (URL to the pre-order/catering page if found)
+- pre_order_deadline (ordering deadline if mentioned, e.g. "Available through Sunday night")
+- pre_order_url (URL to pre-order page if found)
 - special_items (array of special menu item names if listed)
 
 If NO Super Bowl or game day deals are found, return {"deals": []}.
-${websiteUrl ? '' : 'If this is a search results page, click on the first relevant restaurant website to check for deals.'}`;
+Return the JSON object ONLY, no other text.`
+        : `Search for Super Bowl deals, game day specials, or promotions for this restaurant.
+
+IMPORTANT: First, read the CURRENT page carefully — look at ALL visible content including:
+- Google search result snippets and descriptions
+- Social media post previews (Facebook, Instagram) visible in search results
+- News article headlines and summaries
+- Any mention of deals, specials, promo codes, party platters, or game day offers
+
+If you can see deal information on this page (even in snippets/previews), extract it immediately.
+Only click through to another page if NO deal info is visible on the current page.
+
+DO NOT click on Facebook or Instagram links (they require login).
+If clicking through, prefer the restaurant's own website, news articles, or food blogs.
+
+Return a JSON object with a "deals" array. Each deal should have:
+- description (the full deal text, e.g. "$49.99 Big Game Special: 3 large pizzas + 20 wings")
+- promo_code (any promo/coupon code if mentioned)
+- pre_order_deadline (ordering deadline if mentioned, e.g. "Available through Sunday night")
+- pre_order_url (URL to pre-order page if found)
+- special_items (array of special menu item names if listed)
+
+If NO Super Bowl or game day deals are found, return {"deals": []}.
+Return the JSON object ONLY, no other text.`;
 
     try {
         console.log(`Deals fallback: scraping website for ${name}: ${url}`);
