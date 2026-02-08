@@ -40,50 +40,66 @@ const MAX_AUTO_SCRAPES = 5; // Limit auto-triggered menu scrapes to conserve Min
  */
 async function enrichSpotsWithPrices(spots: WingSpot[]): Promise<WingSpot[]> {
     const enriched = [...spots];
-    const missingPriceIds = enriched
-        .map((s, i) => ({ id: s.id, idx: i }))
-        .filter(({ idx }) => enriched[idx].price_per_wing === null);
+    const allIds = enriched.map((s, i) => ({ id: s.id, idx: i }));
+    const missingPriceIds = allIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    const missingPhoneIds = allIds.filter(({ idx }) => !enriched[idx].phone);
 
-    if (missingPriceIds.length === 0) return enriched;
+    if (missingPriceIds.length === 0 && missingPhoneIds.length === 0) return enriched;
 
-    // Step 1: Try Redis menu cache first (parallel)
-    const redisPromises = missingPriceIds.map(async ({ id, idx }) => {
-        try {
-            const cachedMenu = await getCachedMenu(id);
-            if (cachedMenu?.sections) {
-                const price = getCheapestWingPrice(cachedMenu.sections);
-                if (price !== null) {
-                    enriched[idx] = { ...enriched[idx], price_per_wing: price };
+    // Step 1: Try Redis menu cache first for prices (parallel)
+    if (missingPriceIds.length > 0) {
+        const redisPromises = missingPriceIds.map(async ({ id, idx }) => {
+            try {
+                const cachedMenu = await getCachedMenu(id);
+                if (cachedMenu?.sections) {
+                    const price = getCheapestWingPrice(cachedMenu.sections);
+                    if (price !== null) {
+                        enriched[idx] = { ...enriched[idx], price_per_wing: price };
+                    }
                 }
-            }
-        } catch { /* ignore */ }
-    });
-    await Promise.all(redisPromises);
+            } catch { /* ignore */ }
+        });
+        await Promise.all(redisPromises);
+    }
 
-    // Step 2: For remaining nulls, check Supabase wing_spots (background scrape may have written prices)
-    const stillMissing = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
-    if (stillMissing.length > 0) {
+    // Step 2: Check Supabase wing_spots for prices AND phone numbers
+    const needsPriceFromDb = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
+    const idsToQuery = new Set([
+        ...needsPriceFromDb.map(m => m.id),
+        ...missingPhoneIds.map(m => m.id),
+    ]);
+
+    if (idsToQuery.size > 0) {
         try {
             const supabase = createServerClient();
-            const { data: dbPrices } = await supabase
+            const { data: dbRows } = await supabase
                 .from('wing_spots')
-                .select('id, price_per_wing')
-                .in('id', stillMissing.map(m => m.id))
-                .not('price_per_wing', 'is', null);
+                .select('id, price_per_wing, phone, address')
+                .in('id', Array.from(idsToQuery));
 
-            if (dbPrices) {
-                const priceMap = new Map(dbPrices.map(d => [d.id, d.price_per_wing]));
-                for (const { id, idx } of stillMissing) {
-                    const dbPrice = priceMap.get(id);
-                    if (dbPrice !== undefined && dbPrice !== null) {
-                        enriched[idx] = { ...enriched[idx], price_per_wing: dbPrice };
+            if (dbRows) {
+                const dbMap = new Map(dbRows.map(d => [d.id, d]));
+                for (const { id, idx } of allIds) {
+                    const dbRow = dbMap.get(id);
+                    if (!dbRow) continue;
+                    // Enrich price
+                    if (enriched[idx].price_per_wing === null && dbRow.price_per_wing !== null) {
+                        enriched[idx] = { ...enriched[idx], price_per_wing: dbRow.price_per_wing };
+                    }
+                    // Enrich phone
+                    if (!enriched[idx].phone && dbRow.phone) {
+                        enriched[idx] = { ...enriched[idx], phone: dbRow.phone };
+                    }
+                    // Enrich address (if currently empty)
+                    if (!enriched[idx].address && dbRow.address) {
+                        enriched[idx] = { ...enriched[idx], address: dbRow.address };
                     }
                 }
             }
         } catch { /* ignore */ }
     }
 
-    // Step 3: For STILL remaining nulls, check Supabase menus table
+    // Step 3: For STILL remaining price nulls, check Supabase menus table
     const stillMissing2 = missingPriceIds.filter(({ idx }) => enriched[idx].price_per_wing === null);
     if (stillMissing2.length > 0 && stillMissing2.length <= 10) {
         try {

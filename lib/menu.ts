@@ -11,6 +11,16 @@ import { cacheMenu, cacheChainMenu, clearScoutingLock } from './cache';
 import { createServerClient } from './supabase';
 
 /**
+ * Result from a menu scrape, including contact info extracted from the page.
+ * phone/address are only available when scraping direct platform URLs (DoorDash, etc.)
+ */
+export interface MenuScrapeResult {
+    sections: MenuSection[];
+    phone?: string;
+    address?: string;
+}
+
+/**
  * Main menu fetching function with fallback chain
  * Priority: 1. Yelp Fusion API  2. Mino scraping (45s timeout)
  */
@@ -27,9 +37,9 @@ export async function fetchMenu(
     }
 
     // 2. Fallback to Mino scraping (wings-only, 45s timeout)
-    const scrapedMenu = await scrapeMenuWithMino(name, address, platformIds);
-    if (scrapedMenu) {
-        return buildMenu(spotId, scrapedMenu, 'mino_scrape', platformIds?.source_url);
+    const scrapeResult = await scrapeMenuWithMino(name, address, platformIds);
+    if (scrapeResult) {
+        return buildMenu(spotId, scrapeResult.sections, 'mino_scrape', platformIds?.source_url);
     }
 
     return null;
@@ -86,10 +96,10 @@ async function fetchYelpMenu(
 
 function getWingsOnlyGoal(hasDirectUrl: boolean): string {
     if (hasDirectUrl) {
-        return `Navigate to this restaurant page. Find ONLY chicken wing menu items.
+        return `Navigate to this restaurant page. Find chicken wing menu items AND the restaurant's phone number and address.
 
 IMPORTANT: You MUST return ONLY a JSON object in this EXACT format — no other text:
-{"sections": [{"name": "Wings", "items": [{"name": "10pc Wings", "price": 12.99, "quantity": 10}]}]}
+{"sections": [{"name": "Wings", "items": [{"name": "10pc Wings", "price": 12.99, "quantity": 10}]}], "phone": "+11234567890", "address": "123 Main St, City, ST 12345"}
 
 Wing keywords: wings, buffalo wings, boneless wings, bone-in wings, tenders, chicken tenders, nuggets, drumettes, wing combo, wing deal, wing bucket.
 SKIP everything else (burgers, fries, drinks, desserts, salads, sandwiches).
@@ -97,7 +107,11 @@ SKIP everything else (burgers, fries, drinks, desserts, salads, sandwiches).
 Each item needs: name (string), price (number without $), quantity (number if mentioned like "10 pc").
 Group items into sections by type (e.g. "Wings", "Tenders", "Combos").
 
-If the menu is not visible or NO wing items exist, return exactly: {"sections": []}
+For phone: Look for a phone number on the page (often in store info, footer, or contact section). Include country code.
+For address: Look for the restaurant's street address (often near a map or in store info).
+If phone or address is not visible, omit those fields.
+
+If the menu is not visible or NO wing items exist, return exactly: {"sections": [], "phone": "", "address": ""}
 
 CRITICAL: Return ONLY the JSON object. No notes, no descriptions, no explanations.`;
     }
@@ -292,14 +306,48 @@ function extractItemsFromText(text: string): MenuItem[] {
 // ===========================================
 
 /**
+ * Extract phone and address from a parsed Mino response object.
+ * Returns cleaned values or undefined if not found.
+ */
+function extractContactInfo(data: unknown): { phone?: string; address?: string } {
+    if (!data || typeof data !== 'object') return {};
+    const obj = data as Record<string, unknown>;
+
+    let phone: string | undefined;
+    let address: string | undefined;
+
+    // Extract phone
+    if (obj.phone && typeof obj.phone === 'string') {
+        const rawPhone = obj.phone.trim();
+        // Must look like a phone number (at least 7 digits)
+        const digits = rawPhone.replace(/\D/g, '');
+        if (digits.length >= 7) {
+            phone = rawPhone;
+        }
+    }
+
+    // Extract address
+    if (obj.address && typeof obj.address === 'string') {
+        const rawAddr = obj.address.trim();
+        // Must be a real address (not empty, not a placeholder)
+        if (rawAddr.length > 5 && rawAddr.toLowerCase() !== 'n/a' && rawAddr !== '') {
+            address = rawAddr;
+        }
+    }
+
+    return { phone, address };
+}
+
+/**
  * Single scrape attempt: call Mino, parse the response using all available formats.
- * Returns MenuSection[] (may be empty []) or null on API failure.
+ * Returns MenuScrapeResult (sections may be empty []) or null on API failure.
+ * Also extracts phone and address when available in the response.
  */
 async function attemptScrape(
     scrape: (url: string, goal: string) => Promise<AgentQLResponse>,
     url: string,
     goal: string
-): Promise<MenuSection[] | null> {
+): Promise<MenuScrapeResult | null> {
     console.log(`Mino wing scrape: ${url}`);
     const result = await scrape(url, goal);
 
@@ -323,19 +371,24 @@ async function attemptScrape(
             const textItems = extractItemsFromText(trimmed);
             if (textItems.length > 0) {
                 console.log(`Mino wing scrape: Extracted ${textItems.length} items from text`);
-                return [{ name: 'Wings', items: textItems }];
+                return { sections: [{ name: 'Wings', items: textItems }] };
             }
             console.log('Mino wing scrape: No extractable items from text response');
-            return []; // Empty array = "no wings found" (not null = "failed")
+            return { sections: [] }; // Empty = "no wings found" (not null = "failed")
         }
     }
+
+    // Extract contact info from the parsed response (phone, address)
+    const contact = extractContactInfo(parsed);
+    if (contact.phone) console.log(`Mino wing scrape: Found phone: ${contact.phone}`);
+    if (contact.address) console.log(`Mino wing scrape: Found address: ${contact.address.substring(0, 50)}`);
 
     // Standard format: { sections: [...] }
     const data = parsed as { sections?: Array<{ name: string; items: unknown[] }> };
     if (data.sections && Array.isArray(data.sections)) {
         if (data.sections.length === 0) {
             console.log('Mino wing scrape: Returned empty sections array (no wings at this restaurant)');
-            return []; // Mino explicitly said no wings
+            return { sections: [], ...contact }; // Mino explicitly said no wings
         }
 
         // Parse and structure the menu sections
@@ -355,7 +408,7 @@ async function attemptScrape(
         }));
 
         console.log(`Mino wing scrape: Found ${sections.length} sections (standard format)`);
-        return sections;
+        return { sections, ...contact };
     }
 
     // Non-standard format — try alternative extraction
@@ -363,12 +416,12 @@ async function attemptScrape(
         JSON.stringify(data).substring(0, 300));
     const altSections = extractFromAlternativeFormat(parsed);
     if (altSections && altSections.length > 0) {
-        return altSections;
+        return { sections: altSections, ...contact };
     }
 
     // Mino returned data but nothing we can parse into wing items
     console.log('Mino wing scrape: Could not extract wing items from response');
-    return []; // Empty = "no wings found at this restaurant"
+    return { sections: [], ...contact }; // Empty = "no wings found at this restaurant"
 }
 
 /**
@@ -382,14 +435,15 @@ async function attemptScrape(
  * 2. If platform URL returns empty → try Google search for "[name] menu wings"
  * 3. If already on Google (no platform URL) → single attempt only (no loop)
  *
- * Returns MenuSection[] (may be empty []) or null on total failure
+ * Returns MenuScrapeResult (with sections, phone, address) or null on total failure.
+ * sections may be empty [] meaning "no wings found" vs null meaning "API failure".
  */
 export async function scrapeMenuWithMino(
     name: string,
     address: string,
     platformIds?: PlatformIds,
     scrapeFn?: (url: string, goal: string) => Promise<AgentQLResponse>
-): Promise<MenuSection[] | null> {
+): Promise<MenuScrapeResult | null> {
     const scrape = scrapeFn || executeMinoMenuScrape;
 
     // Determine best URL to scrape
@@ -401,23 +455,29 @@ export async function scrapeMenuWithMino(
 
     try {
         // First attempt: platform URL or Google Maps
-        const sections = await attemptScrape(scrape, scrapeUrl, goal);
+        const result = await attemptScrape(scrape, scrapeUrl, goal);
 
-        // If platform URL returned empty, try Google search as fallback
+        // If platform URL returned empty sections, try Google search as fallback
         // Only when we used a direct URL (don't loop if already on Google)
-        if (sections !== null && sections.length === 0 && hasDirectUrl) {
+        // But preserve contact info from the first attempt
+        if (result !== null && result.sections.length === 0 && hasDirectUrl) {
             console.log(`Mino wing scrape: platform URL returned empty, trying Google search for "${name}"...`);
             const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(name + ' menu wings')}`;
             const googleGoal = getWingsOnlyGoal(false);
-            const googleSections = await attemptScrape(scrape, googleUrl, googleGoal);
-            if (googleSections && googleSections.length > 0) {
-                console.log(`Mino wing scrape: Google fallback found ${googleSections.length} sections!`);
-                return googleSections;
+            const googleResult = await attemptScrape(scrape, googleUrl, googleGoal);
+            if (googleResult && googleResult.sections.length > 0) {
+                console.log(`Mino wing scrape: Google fallback found ${googleResult.sections.length} sections!`);
+                // Merge: use Google's sections but keep contact info from platform page
+                return {
+                    sections: googleResult.sections,
+                    phone: result.phone || googleResult.phone,
+                    address: result.address || googleResult.address,
+                };
             }
             console.log('Mino wing scrape: Google fallback also empty — genuinely no wings');
         }
 
-        return sections;
+        return result;
     } catch (error) {
         console.error('Mino wing scrape error:', error);
         return null; // null = actual failure, can retry
@@ -594,13 +654,15 @@ export function startBackgroundMenuScrape(
     // Fire-and-forget — reuses scrapeMenuWithMino with full 120s timeout
     (async () => {
         try {
-            const sections = await scrapeMenuWithMino(name, address, platformIds, executeMinoScrape);
+            const scrapeResult = await scrapeMenuWithMino(name, address, platformIds, executeMinoScrape);
 
             // null = total failure (API error, timeout, etc.) — don't cache, allow retry
-            if (sections === null) {
+            if (scrapeResult === null) {
                 console.log(`Background scrape: failed for ${spotId} (will allow retry)`);
                 return;
             }
+
+            const { sections, phone: scrapedPhone, address: scrapedAddress } = scrapeResult;
 
             // Empty array = Mino found no wing items at this restaurant — cache to prevent re-scraping
             const menu = buildMenu(spotId, sections, 'mino_scrape', platformIds?.source_url);
@@ -623,14 +685,27 @@ export function startBackgroundMenuScrape(
                         fetched_at: menu.fetched_at,
                     }, { onConflict: 'spot_id' });
 
-                // Extract cheapest wing price and update the wing_spots table
+                // Build update payload for wing_spots: price + phone + address
                 const cheapestPrice = getCheapestWingPrice(sections);
+                const updatePayload: Record<string, unknown> = {};
+
                 if (cheapestPrice !== null) {
+                    updatePayload.price_per_wing = cheapestPrice;
+                }
+                if (scrapedPhone) {
+                    updatePayload.phone = scrapedPhone;
+                }
+                if (scrapedAddress) {
+                    updatePayload.address = scrapedAddress;
+                }
+
+                if (Object.keys(updatePayload).length > 0) {
                     await supabase
                         .from('wing_spots')
-                        .update({ price_per_wing: cheapestPrice })
+                        .update(updatePayload)
                         .eq('id', spotId);
-                    console.log(`Background scrape: Updated price_per_wing=$${cheapestPrice.toFixed(2)} for ${spotId}`);
+                    const fields = Object.keys(updatePayload).join(', ');
+                    console.log(`Background scrape: Updated ${fields} for ${spotId}${cheapestPrice !== null ? ` (price=$${cheapestPrice.toFixed(2)})` : ''}${scrapedPhone ? ` (phone=${scrapedPhone})` : ''}`);
                 }
             } catch (dbErr) {
                 console.error('Background scrape: Supabase persist error:', dbErr);
