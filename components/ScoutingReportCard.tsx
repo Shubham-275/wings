@@ -3,8 +3,10 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, MapPin, Phone, ExternalLink, DollarSign, UtensilsCrossed } from 'lucide-react';
-import { WingSpot } from '@/lib/types';
+import { WingSpot, DealsResponse } from '@/lib/types';
+import { useQuery } from '@tanstack/react-query';
 import { MenuModal } from './MenuModal';
+import { InlineDealBadge, DealsView } from './DealsView';
 import {
     getStatusColorClass,
     getStatusEmoji,
@@ -123,14 +125,34 @@ interface ScoutingReportCardProps {
     spot: WingSpot;
     index: number;
     isBestDeal: boolean;
+    autoFetchDeals?: boolean;
     isCompareSelected?: boolean;
     onToggleCompare?: () => void;
 }
 
-export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected, onToggleCompare }: ScoutingReportCardProps) {
+export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, isCompareSelected, onToggleCompare }: ScoutingReportCardProps) {
     const [isHovered, setIsHovered] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [showDeals, setShowDeals] = useState(false);
     const cardRef = useRef<HTMLDivElement>(null);
+
+    // Auto-fetch or on-demand deals query
+    const dealsEnabled = autoFetchDeals || showDeals;
+    const { data: dealsData } = useQuery<DealsResponse>({
+        queryKey: ['deals', spot.id],
+        queryFn: async () => {
+            const res = await fetch(`/api/deals?spot_id=${encodeURIComponent(spot.id)}`);
+            if (!res.ok) throw new Error('Failed to fetch deals');
+            return res.json();
+        },
+        staleTime: 15 * 60 * 1000,
+        gcTime: 60 * 60 * 1000,
+        retry: 1,
+        enabled: dealsEnabled,
+    });
+
+    const hasDeals = dealsData?.success && dealsData.deals.length > 0;
+    const firstDeal = hasDeals ? dealsData.deals[0] : null;
 
     const draftGrade = calculateDraftGrade(spot);
     const restaurantType = getRestaurantType(spot);
@@ -269,6 +291,9 @@ export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected,
                                 </span>
                             </motion.div>
                         )}
+
+                        {/* Super Bowl deal inline badge */}
+                        {firstDeal && <InlineDealBadge deal={firstDeal} />}
                     </div>
                 </div>
 
@@ -324,6 +349,13 @@ export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected,
                     </div>
                 </div>
 
+                {/* ===== Super Bowl Deals Section ===== */}
+                {showDeals && (
+                    <div className="pt-1 border-t border-dashed border-amber-300/40">
+                        <DealsView spotId={spot.id} spotName={spot.name} enabled={showDeals} />
+                    </div>
+                )}
+
                 {/* ===== Footer — Source + Actions ===== */}
                 <div className="flex items-center justify-between pt-2 border-t border-dashed border-amber-300/40">
                     <div className="flex items-center gap-2">
@@ -336,6 +368,17 @@ export function ScoutingReportCard({ spot, index, isBestDeal, isCompareSelected,
                     </div>
 
                     <div className="flex items-center gap-0.5">
+                        {/* SB Deals button */}
+                        <button
+                            onClick={() => setShowDeals(!showDeals)}
+                            className={cn(
+                                'p-1.5 rounded-lg transition-colors',
+                                showDeals ? 'bg-amber-200/60' : 'hover:bg-amber-100/60',
+                            )}
+                            title={showDeals ? 'Hide Super Bowl Deals' : 'Check Super Bowl Deals'}
+                        >
+                            <span className="text-sm leading-none">🏈</span>
+                        </button>
                         <button
                             onClick={() => setIsMenuOpen(true)}
                             className="p-1.5 rounded-lg hover:bg-amber-100/60 transition-colors"

@@ -131,6 +131,8 @@ export interface PlatformIds {
     ubereats_store_uuid?: string;
     grubhub_restaurant_id?: string;
     source_url?: string;
+    website_url?: string;
+    instagram_url?: string;
 }
 
 /**
@@ -185,6 +187,8 @@ export interface ScrapedRestaurant {
     store_uuid?: string;
     restaurant_id?: string;
     source_url?: string;
+    website_url?: string;
+    instagram_url?: string;
 }
 
 /**
@@ -246,6 +250,28 @@ export interface AvailabilityStats {
     yellow: number;
     red: number;
     percentage: number;
+}
+
+/**
+ * Super Bowl deal found on restaurant website or social media
+ */
+export interface SuperBowlDeal {
+    description: string;
+    source: 'website' | 'instagram';
+    promo_code?: string;
+    pre_order_deadline?: string;
+    pre_order_url?: string;
+    special_menu_items?: string[];
+}
+
+/**
+ * Deals API response
+ */
+export interface DealsResponse {
+    success: boolean;
+    deals: SuperBowlDeal[];
+    cached: boolean;
+    message: string;
 }
 
 /**
