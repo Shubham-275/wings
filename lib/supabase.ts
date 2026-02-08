@@ -117,8 +117,8 @@ export async function upsertWingSpots(
     client: SupabaseClientAny,
     spots: Omit<WingSpot, 'created_at'>[]
 ): Promise<{ error: Error | null }> {
-    // Strip cheapest_item_price — column may not exist in Supabase yet
-    const sanitized = spots.map(({ cheapest_item_price: _cip, ...rest }) => rest);
+    // Strip in-memory-only fields that don't have Supabase columns
+    const sanitized = spots.map(({ cheapest_item_price: _cip, estimated_price_per_wing: _epw, is_price_estimated: _ipe, ...rest }) => rest);
     const { error } = await client
         .from('wing_spots')
         .upsert(sanitized, { onConflict: 'id', ignoreDuplicates: false });

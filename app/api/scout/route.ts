@@ -334,9 +334,10 @@ export async function GET(request: NextRequest) {
 
         if (!location) {
             if (dbSpots && dbSpots.length > 0) {
+                const estimated = estimateMissingPrices(await enrichSpotsWithPrices(dbSpots));
                 return NextResponse.json<ScoutResponse>({
                     success: true,
-                    spots: dbSpots,
+                    spots: estimated,
                     cached: true,
                     flavor,
                     message: 'Could not geocode zip, showing cached data',
@@ -356,9 +357,10 @@ export async function GET(request: NextRequest) {
         if (scrapedSpots.length === 0) {
             if (dbSpots && dbSpots.length > 0) {
                 log('using stale DB data as fallback');
+                const estimated = estimateMissingPrices(await enrichSpotsWithPrices(dbSpots));
                 return NextResponse.json<ScoutResponse>({
                     success: true,
-                    spots: dbSpots,
+                    spots: estimated,
                     cached: true,
                     flavor,
                     message: 'No new data found, showing cached results',
@@ -386,7 +388,7 @@ export async function GET(request: NextRequest) {
         // 6. Cache results + estimate missing prices
         log('caching results...');
         await cacheWingSpots(zipCode, scrapedSpots);
-        const estimatedSpots = estimateMissingPrices(scrapedSpots);
+        const estimatedSpots = estimateMissingPrices(await enrichSpotsWithPrices(scrapedSpots));
 
         const result: ScoutResponse = {
             success: true,
@@ -417,9 +419,10 @@ export async function GET(request: NextRequest) {
             const supabase = createServerClient();
             const { data: fallbackSpots } = await getWingSpotsByZip(supabase, zipCode);
             if (fallbackSpots && fallbackSpots.length > 0) {
+                const estimated = estimateMissingPrices(await enrichSpotsWithPrices(fallbackSpots));
                 return NextResponse.json<ScoutResponse>({
                     success: true,
-                    spots: fallbackSpots,
+                    spots: estimated,
                     cached: true,
                     flavor,
                     message: 'Error occurred, showing cached data',
