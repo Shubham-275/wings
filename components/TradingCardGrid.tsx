@@ -65,6 +65,11 @@ function calcGradeScore(spot: WingSpot): number {
         else if (spot.price_per_wing <= 1.5) score += 15;
         else if (spot.price_per_wing <= 2.0) score += 5;
         else score -= 10;
+    } else if (spot.estimated_price_per_wing != null) {
+        if (spot.estimated_price_per_wing <= 1.0) score += 12;
+        else if (spot.estimated_price_per_wing <= 1.5) score += 8;
+        else if (spot.estimated_price_per_wing <= 2.0) score += 3;
+        else score -= 5;
     }
     if (spot.deal_text) score += 10;
     if (spot.delivery_time_mins !== null) {
@@ -97,6 +102,11 @@ function findBestDealIndex(spots: WingSpot[]): number {
             else if (spot.price_per_wing <= 1.5) score += 15;
             else if (spot.price_per_wing <= 2.0) score += 5;
             else score -= 10;
+        } else if (spot.estimated_price_per_wing != null) {
+            if (spot.estimated_price_per_wing <= 1.0) score += 12;
+            else if (spot.estimated_price_per_wing <= 1.5) score += 8;
+            else if (spot.estimated_price_per_wing <= 2.0) score += 3;
+            else score -= 5;
         }
         if (spot.deal_text) score += 10;
         if (spot.delivery_time_mins !== null) {

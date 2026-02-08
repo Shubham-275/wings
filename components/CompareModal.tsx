@@ -142,10 +142,16 @@ export function CompareModal({ spots, isOpen, onClose }: CompareModalProps) {
                                                         className={`text-center py-2.5 px-2 font-mono font-semibold ${
                                                             i === bestPriceIdx
                                                                 ? 'text-stadium-green bg-stadium-green/5'
-                                                                : 'text-amber-800'
+                                                                : spot.price_per_wing == null && spot.estimated_price_per_wing != null
+                                                                    ? 'text-amber-600 italic'
+                                                                    : 'text-amber-800'
                                                         }`}
                                                     >
-                                                        {formatPrice(spot.price_per_wing)}
+                                                        {spot.price_per_wing != null
+                                                            ? formatPrice(spot.price_per_wing)
+                                                            : spot.estimated_price_per_wing != null
+                                                                ? `~${formatPrice(spot.estimated_price_per_wing)}`
+                                                                : '—'}
                                                         {i === bestPriceIdx && spot.price_per_wing !== null && (
                                                             <span className="block text-[9px] text-stadium-green font-heading mt-0.5">BEST</span>
                                                         )}

@@ -7,6 +7,7 @@ import { generateSeedData } from '@/lib/seed-data';
 import { isValidZipCode, cleanZipCode, calculateAvailability } from '@/lib/utils';
 import { startBackgroundMenuScrape, getCheapestWingPrice } from '@/lib/menu';
 import { ScoutResponse, FlavorPersona, WingSpot, MenuSection } from '@/lib/types';
+import { getChainPriceEstimate } from '@/lib/chain-prices';
 
 // Render.com: No timeout limit for Web Services (unlimited runtime)
 // Setting Node.js runtime explicitly
@@ -158,6 +159,58 @@ function autoTriggerMenuScrapes(spots: WingSpot[]): void {
     }
 }
 
+/**
+ * Estimate prices for spots that still have no price data after enrichment.
+ * Hybrid approach:
+ *   1. Chain lookup: if the restaurant is a known chain, use hardcoded price midpoint
+ *   2. Zip-code average: for unknowns, average all real + chain prices in this batch
+ */
+function estimateMissingPrices(spots: WingSpot[]): WingSpot[] {
+    const result = [...spots];
+
+    // Step 1: Collect real per-wing prices
+    const realPrices: number[] = [];
+    for (const spot of result) {
+        if (spot.price_per_wing != null) {
+            realPrices.push(spot.price_per_wing);
+        }
+    }
+
+    // Step 2: For spots with no price data, try chain lookup
+    for (let i = 0; i < result.length; i++) {
+        const spot = result[i];
+        if (spot.price_per_wing != null || spot.cheapest_item_price != null) continue;
+
+        const chainEst = getChainPriceEstimate(spot.name);
+        if (chainEst) {
+            const midpoint = Math.round(((chainEst.min + chainEst.max) / 2) * 100) / 100;
+            result[i] = { ...spot, estimated_price_per_wing: midpoint, is_price_estimated: true };
+            realPrices.push(midpoint); // Include in zip average
+        }
+    }
+
+    // Step 3: Calculate zip average (need >= 2 data points)
+    if (realPrices.length >= 2) {
+        const avg = Math.round(
+            (realPrices.reduce((sum, p) => sum + p, 0) / realPrices.length) * 100
+        ) / 100;
+
+        // Step 4: For remaining no-price spots, use zip average
+        for (let i = 0; i < result.length; i++) {
+            const spot = result[i];
+            if (
+                spot.price_per_wing == null &&
+                spot.cheapest_item_price == null &&
+                spot.estimated_price_per_wing == null
+            ) {
+                result[i] = { ...spot, estimated_price_per_wing: avg, is_price_estimated: true };
+            }
+        }
+    }
+
+    return result;
+}
+
 export async function GET(request: NextRequest) {
     const t0 = Date.now();
     const log = (msg: string) => console.log(`[scout ${Date.now() - t0}ms] ${msg}`);
@@ -219,7 +272,7 @@ export async function GET(request: NextRequest) {
             const cachedResult = await getCachedScrapeResult(zipCode);
             if (cachedResult) {
                 log(`HIT scrapeResult cache: ${cachedResult.spots.length} spots`);
-                const enrichedSpots = await enrichSpotsWithPrices(cachedResult.spots);
+                const enrichedSpots = estimateMissingPrices(await enrichSpotsWithPrices(cachedResult.spots));
                 return NextResponse.json<ScoutResponse>({
                     ...cachedResult,
                     spots: enrichedSpots,
@@ -234,7 +287,7 @@ export async function GET(request: NextRequest) {
             const cachedSpots = await getCachedWingSpots(zipCode);
             if (cachedSpots && cachedSpots.length > 0) {
                 log(`HIT wingSpots cache: ${cachedSpots.length} spots`);
-                const enrichedSpots = await enrichSpotsWithPrices(cachedSpots);
+                const enrichedSpots = estimateMissingPrices(await enrichSpotsWithPrices(cachedSpots));
                 const stats = calculateAvailability(enrichedSpots);
                 return NextResponse.json<ScoutResponse>({
                     success: true,
@@ -261,7 +314,7 @@ export async function GET(request: NextRequest) {
             log(`Supabase data age: ${ageMinutes.toFixed(1)} min`);
 
             if (ageMinutes < 60) { // 1 hour — restaurant data (hours, menu, location) doesn't change fast
-                const enrichedDbSpots = await enrichSpotsWithPrices(dbSpots);
+                const enrichedDbSpots = estimateMissingPrices(await enrichSpotsWithPrices(dbSpots));
                 await cacheWingSpots(zipCode, enrichedDbSpots);
                 const stats = calculateAvailability(enrichedDbSpots);
                 return NextResponse.json<ScoutResponse>({
@@ -330,13 +383,14 @@ export async function GET(request: NextRequest) {
         await upsertWingSpots(supabase, scrapedSpots);
         log('saved');
 
-        // 6. Cache results
+        // 6. Cache results + estimate missing prices
         log('caching results...');
         await cacheWingSpots(zipCode, scrapedSpots);
+        const estimatedSpots = estimateMissingPrices(scrapedSpots);
 
         const result: ScoutResponse = {
             success: true,
-            spots: scrapedSpots,
+            spots: estimatedSpots,
             cached: false,
             flavor,
             message: `Found ${scrapedSpots.length} wing spots`,

@@ -29,6 +29,12 @@ function calculateDraftGrade(spot: WingSpot): { grade: string; color: string; bg
         else if (spot.price_per_wing <= 1.5) score += 15;
         else if (spot.price_per_wing <= 2.0) score += 5;
         else score -= 10;
+    } else if (spot.estimated_price_per_wing != null) {
+        // Estimated prices contribute at half weight
+        if (spot.estimated_price_per_wing <= 1.0) score += 12;
+        else if (spot.estimated_price_per_wing <= 1.5) score += 8;
+        else if (spot.estimated_price_per_wing <= 2.0) score += 3;
+        else score -= 5;
     }
 
     // Deal bonus
@@ -142,12 +148,16 @@ export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, is
     const draftGrade = calculateDraftGrade(spot);
     const restaurantType = getRestaurantType(spot);
     const isSoldOut = spot.status === 'red' && !spot.is_in_stock;
-    // Three-tier price display: per-wing → raw item price → market price
+    // Four-tier price display: per-wing → raw item price → estimate → market price
     const priceStr = spot.price_per_wing != null
         ? `$${spot.price_per_wing.toFixed(2)}/WING`
         : spot.cheapest_item_price != null
             ? `FROM $${spot.cheapest_item_price.toFixed(2)}`
-            : 'MARKET PRICE';
+            : spot.estimated_price_per_wing != null
+                ? `~$${spot.estimated_price_per_wing.toFixed(2)}/WING`
+                : 'MARKET PRICE';
+    const isEstimatedPrice = spot.is_price_estimated === true
+        && spot.price_per_wing == null && spot.cheapest_item_price == null;
     const isGoodPrice = spot.price_per_wing !== null && spot.price_per_wing <= 1.5;
 
     const deliveryStr = spot.delivery_time_mins !== null
@@ -294,10 +304,17 @@ export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, is
                         <span className="relative">
                             <span className={cn(
                                 'font-marker text-sm font-bold',
-                                isGoodPrice ? 'text-green-800' : 'text-red-600'
+                                isEstimatedPrice
+                                    ? 'text-amber-600 italic'
+                                    : isGoodPrice ? 'text-green-800' : 'text-red-600'
                             )}>
                                 {priceStr}
                             </span>
+                            {isEstimatedPrice && (
+                                <span className="block text-[8px] text-amber-500 font-marker -mt-0.5 text-right">
+                                    (est.)
+                                </span>
+                            )}
 
                             {/* Red circle annotation on hover — highlights the price */}
                             <AnimatePresence>
