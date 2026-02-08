@@ -3,10 +3,9 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, MapPin, Phone, ExternalLink, DollarSign, UtensilsCrossed } from 'lucide-react';
-import { WingSpot, DealsResponse } from '@/lib/types';
-import { useQuery } from '@tanstack/react-query';
+import { WingSpot } from '@/lib/types';
 import { MenuModal } from './MenuModal';
-import { InlineDealBadge, DealsView } from './DealsView';
+import { DealsView } from './DealsView';
 import {
     getStatusColorClass,
     getStatusEmoji,
@@ -136,23 +135,9 @@ export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, is
     const [showDeals, setShowDeals] = useState(false);
     const cardRef = useRef<HTMLDivElement>(null);
 
-    // Auto-fetch or on-demand deals query
+    // DealsView handles its own fetching + background polling internally.
+    // We just control when it's enabled (auto-fetch for top 5, or user toggle).
     const dealsEnabled = autoFetchDeals || showDeals;
-    const { data: dealsData } = useQuery<DealsResponse>({
-        queryKey: ['deals', spot.id],
-        queryFn: async () => {
-            const res = await fetch(`/api/deals?spot_id=${encodeURIComponent(spot.id)}`);
-            if (!res.ok) throw new Error('Failed to fetch deals');
-            return res.json();
-        },
-        staleTime: 15 * 60 * 1000,
-        gcTime: 60 * 60 * 1000,
-        retry: 1,
-        enabled: dealsEnabled,
-    });
-
-    const hasDeals = dealsData?.success && dealsData.deals.length > 0;
-    const firstDeal = hasDeals ? dealsData.deals[0] : null;
 
     const draftGrade = calculateDraftGrade(spot);
     const restaurantType = getRestaurantType(spot);
@@ -291,9 +276,6 @@ export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, is
                                 </span>
                             </motion.div>
                         )}
-
-                        {/* Super Bowl deal inline badge */}
-                        {firstDeal && <InlineDealBadge deal={firstDeal} />}
                     </div>
                 </div>
 
@@ -350,9 +332,9 @@ export function ScoutingReportCard({ spot, index, isBestDeal, autoFetchDeals, is
                 </div>
 
                 {/* ===== Super Bowl Deals Section ===== */}
-                {showDeals && (
+                {dealsEnabled && (
                     <div className="pt-1 border-t border-dashed border-amber-300/40">
-                        <DealsView spotId={spot.id} spotName={spot.name} enabled={showDeals} />
+                        <DealsView spotId={spot.id} spotName={spot.name} enabled={dealsEnabled} />
                     </div>
                 )}
 

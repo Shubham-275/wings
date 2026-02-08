@@ -253,15 +253,24 @@ export interface AvailabilityStats {
 }
 
 /**
- * Super Bowl deal found on restaurant website or social media
+ * Super Bowl deal found via aggregator roundup, restaurant website, or social media
  */
 export interface SuperBowlDeal {
     description: string;
-    source: 'website' | 'instagram';
+    source: 'website' | 'instagram' | 'aggregator';
     promo_code?: string;
     pre_order_deadline?: string;
     pre_order_url?: string;
     special_menu_items?: string[];
+}
+
+/**
+ * Aggregator deal — intermediate structure from scraping deal roundup pages.
+ * Groups deals by restaurant name before matching to specific WingSpots.
+ */
+export interface AggregatorDeal {
+    restaurant_name: string;
+    deals: SuperBowlDeal[];
 }
 
 /**
@@ -272,6 +281,7 @@ export interface DealsResponse {
     deals: SuperBowlDeal[];
     cached: boolean;
     message: string;
+    scouting?: boolean; // true when deals are being fetched in the background
 }
 
 /**
