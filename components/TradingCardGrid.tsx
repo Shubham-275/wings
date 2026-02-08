@@ -56,6 +56,29 @@ function SkeletonReportCard() {
 }
 
 // ===========================================
+// Draft grade score calculator (reused for auto-fetch ranking)
+// ===========================================
+function calcGradeScore(spot: WingSpot): number {
+    let score = 50;
+    if (spot.price_per_wing !== null) {
+        if (spot.price_per_wing <= 1.0) score += 25;
+        else if (spot.price_per_wing <= 1.5) score += 15;
+        else if (spot.price_per_wing <= 2.0) score += 5;
+        else score -= 10;
+    }
+    if (spot.deal_text) score += 10;
+    if (spot.delivery_time_mins !== null) {
+        if (spot.delivery_time_mins <= 20) score += 10;
+        else if (spot.delivery_time_mins <= 35) score += 5;
+        else score -= 5;
+    }
+    if (spot.status === 'green') score += 15;
+    else if (spot.status === 'yellow') score += 5;
+    else score -= 15;
+    return Math.max(0, Math.min(100, score));
+}
+
+// ===========================================
 // Find the "best deal" index — highest Draft Grade eligible spot
 // ===========================================
 function findBestDealIndex(spots: WingSpot[]): number {
@@ -126,6 +149,20 @@ export function TradingCardGrid({ spots, isLoading, compareIds, onToggleCompare 
     // Find the best deal
     const bestDealIdx = findBestDealIndex(sorted);
 
+    // Identify top 5 spots by draft grade score for auto-fetching Super Bowl deals
+    const autoFetchDealIds = new Set(
+        [...sorted]
+            .map((spot, idx) => ({ spot, idx }))
+            .filter(({ spot }) => spot.status !== 'red')
+            .sort((a, b) => {
+                const scoreA = calcGradeScore(a.spot);
+                const scoreB = calcGradeScore(b.spot);
+                return scoreB - scoreA;
+            })
+            .slice(0, 5)
+            .map(({ spot }) => spot.id)
+    );
+
     return (
         <div>
             {/* Section Header */}
@@ -169,6 +206,7 @@ export function TradingCardGrid({ spots, isLoading, compareIds, onToggleCompare 
                                 spot={spot}
                                 index={index}
                                 isBestDeal={index === bestDealIdx}
+                                autoFetchDeals={autoFetchDealIds.has(spot.id)}
                                 isCompareSelected={compareIds?.has(spot.id)}
                                 onToggleCompare={onToggleCompare ? () => onToggleCompare(spot.id) : undefined}
                             />

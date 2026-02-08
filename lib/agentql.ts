@@ -44,8 +44,9 @@ interface MinoSyncResponse {
 
 /**
  * Core Mino scrape function with configurable timeout
+ * Exported for use by deals scraper
  */
-async function runMinoScrape(url: string, goal: string, timeoutMs: number): Promise<AgentQLResponse> {
+export async function runMinoScrape(url: string, goal: string, timeoutMs: number): Promise<AgentQLResponse> {
     if (!MINO_API_KEY) {
         console.error('Mino API key not configured');
         return { success: false, data: null, error: 'MINO API KEY not configured' };
@@ -261,6 +262,7 @@ Return a JSON array called "businesses" with these fields for each restaurant:
 - phone (phone number if visible)
 - hours (like "Closed - Opens 11 am" or "Open - Closes 10 pm")
 - image (image URL if visible)
+- website (the restaurant's official website URL if shown in the Google listing, not a Google link)
 Scroll down and extract every restaurant listing. Aim for 10-20+ diverse results including hidden gems and local favorites.`;
 
         const result = await executeMinoScrape(searchUrl, goal);
@@ -271,6 +273,7 @@ Scroll down and extract every restaurant listing. Aim for 10-20+ diverse results
             const hoursStr = String(b.hours || '');
             const isOpen = !hoursStr.toLowerCase().includes('closed');
 
+            const websiteUrl = String(b.website || '');
             restaurants.push({
                 name: String(b.name || 'Unknown'),
                 address: String(b.address || ''),
@@ -281,6 +284,7 @@ Scroll down and extract every restaurant listing. Aim for 10-20+ diverse results
                 is_open: isOpen,
                 source: 'google',
                 menu_items: [],
+                website_url: websiteUrl && websiteUrl.startsWith('http') ? websiteUrl : undefined,
             });
         }
         console.log(`Google: Found ${restaurants.length} restaurants`);
@@ -315,6 +319,8 @@ function processRestaurants(
         if (restaurant.store_uuid) platformIds.ubereats_store_uuid = restaurant.store_uuid;
         if (restaurant.restaurant_id) platformIds.grubhub_restaurant_id = restaurant.restaurant_id;
         if (restaurant.source_url) platformIds.source_url = restaurant.source_url;
+        if (restaurant.website_url) platformIds.website_url = restaurant.website_url;
+        if (restaurant.instagram_url) platformIds.instagram_url = restaurant.instagram_url;
 
         const spot: Omit<WingSpot, 'status'> & { status?: WingSpot['status'] } = {
             id: `${restaurant.source}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,

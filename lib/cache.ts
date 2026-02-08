@@ -3,7 +3,7 @@
 // ===========================================
 
 import { Redis } from '@upstash/redis';
-import { WingSpot, GeocodedLocation, ScrapeResponse, Menu } from './types';
+import { WingSpot, GeocodedLocation, ScrapeResponse, Menu, SuperBowlDeal } from './types';
 
 // Validate Redis environment variables
 const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
@@ -367,6 +367,38 @@ export async function cacheChainMenu(name: string, menu: Menu): Promise<void> {
         console.log(`Cached chain menu: ${key}`);
     } catch (error) {
         console.error('Redis cacheChainMenu error:', error);
+    }
+}
+
+// ===========================================
+// Super Bowl Deals Caching
+// ===========================================
+
+const DEALS_TTL = 30 * 60; // 30 minutes
+const dealsKey = (spotId: string) => `deals:${spotId}`;
+
+/**
+ * Get cached Super Bowl deals for a spot
+ */
+export async function getCachedDeals(spotId: string): Promise<SuperBowlDeal[] | null> {
+    if (!redis) return null;
+    try {
+        return await redis.get<SuperBowlDeal[]>(dealsKey(spotId));
+    } catch (error) {
+        console.error('Redis getCachedDeals error:', error);
+        return null;
+    }
+}
+
+/**
+ * Cache Super Bowl deals for a spot (30-min TTL)
+ */
+export async function cacheDeals(spotId: string, deals: SuperBowlDeal[]): Promise<void> {
+    if (!redis) return;
+    try {
+        await redis.set(dealsKey(spotId), deals, { ex: DEALS_TTL });
+    } catch (error) {
+        console.error('Redis cacheDeals error:', error);
     }
 }
 
