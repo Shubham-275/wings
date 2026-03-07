@@ -131,21 +131,23 @@ def geocode_zip(zip_code: str) -> Optional[Dict[str, float]]:
     return None
 
 
-def scrape_with_tinyfish(url: str, query: str) -> Optional[Dict]:
-    """Execute TinyFish scrape"""
+def scrape_with_tinyfish(url: str, goal: str) -> Optional[Dict]:
+    """Execute TinyFish scrape via sync endpoint"""
     try:
         response = requests.post(
-            f'{TINYFISH_API_URL}/v1/query',
-            json={'url': url, 'query': query, 'timeout': 60000},
+            f'{TINYFISH_API_URL}/v1/automation/run',
+            json={'url': url, 'goal': goal},
             headers={
-                'Authorization': f'Bearer {TINYFISH_API_KEY}',
+                'X-API-Key': TINYFISH_API_KEY,
                 'Content-Type': 'application/json',
-                'User-Agent': random.choice(USER_AGENTS),
             },
-            timeout=65
+            timeout=120
         )
         if response.status_code == 200:
-            return response.json()
+            data = response.json()
+            if data.get('status') == 'COMPLETED' and data.get('result'):
+                return data['result']
+            logger.warning(f'TinyFish status: {data.get("status")}, no result')
     except Exception as e:
         logger.error(f'TinyFish error: {e}')
     return None
