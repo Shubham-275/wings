@@ -24,7 +24,7 @@ Frontend (Next.js 14 App Router)
 
 Backend (API Route)
   |-- /api/scout         -> Main endpoint (zip + flavor)
-  |-- lib/agentql.ts     -> Mino Enterprise parallel scraping engine
+  |-- lib/tinyfish-scraper.ts     -> TinyFish parallel scraping engine
   |-- lib/geocode.ts     -> Nominatim (OpenStreetMap) geocoding
   |-- lib/cache.ts       -> Upstash Redis caching layer
 
@@ -64,7 +64,7 @@ Spots are scored 0-100 against the selected persona.
 
 - Node.js >= 18
 - Supabase project (free tier works)
-- Mino/AgentQL API key
+- TinyFish API key
 - Upstash Redis (optional but recommended)
 
 ### Environment Variables
@@ -74,7 +74,7 @@ Create `.env.local`:
 ```env
 # Required - Server
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
-AGENTQL_API_KEY=your_mino_api_key
+TINYFISH_API_KEY=your-tinyfish-api-key
 
 # Required - Client
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -84,8 +84,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
 UPSTASH_REDIS_REST_TOKEN=your_redis_token
 
-# Optional - Custom Mino endpoint
-AGENTQL_API_URL=https://mino.ai/v1/automation/run-sse
+# Optional - Custom TinyFish endpoint
+TINYFISH_API_URL=https://agent.tinyfish.ai/v1/automation/run
 ```
 
 ### Database Setup
@@ -151,7 +151,7 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
-      - key: AGENTQL_API_KEY
+      - key: TINYFISH_API_KEY
         sync: false
       - key: UPSTASH_REDIS_REST_URL
         sync: false
@@ -190,7 +190,7 @@ wing-scout/
 │   ├── WingGrid.tsx            # Scout Cards grid (glassmorphism)
 │   └── ui/                     # Reusable UI primitives
 ├── lib/
-│   ├── agentql.ts              # Mino/AgentQL scraper (parallel, flavor-aware)
+│   ├── tinyfish-scraper.ts              # TinyFish scraper (parallel, flavor-aware)
 │   ├── types.ts                # TypeScript definitions
 │   ├── utils.ts                # Flavor scoring, dedup, formatting
 │   ├── supabase.ts             # Database client
@@ -225,6 +225,6 @@ wing-scout/
 - **Icons:** Lucide React
 - **Database:** Supabase (PostgreSQL + PostGIS)
 - **Cache:** Upstash Redis
-- **Scraper:** Mino Enterprise (AgentQL)
+- **Scraper:** TinyFish
 - **Geocoding:** Nominatim (OpenStreetMap)
 - **Deployment:** Render.com (Web Service)

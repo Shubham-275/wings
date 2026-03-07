@@ -31,8 +31,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          AGENTQL_API_KEY: ${{ secrets.AGENTQL_API_KEY }}
-          AGENTQL_API_URL: ${{ secrets.AGENTQL_API_URL }}
+          TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
+          TINYFISH_API_URL: ${{ secrets.TINYFISH_API_URL }}
         run: |
           cd scraper
           python scrape_wings.py
